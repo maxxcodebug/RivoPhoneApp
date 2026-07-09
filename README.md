@@ -49,6 +49,8 @@ RivoPhoneApp is currently under closed testing. You'd need to join this [Google 
 * Automatic screen handling with proximity sensor support
 * Smooth performance powered by Jetpack Compose
 * Fully open source etc.
+* Call Recording.
+* but remember this is only for while compiling custom ROM.
 
 ## Contributing
 
