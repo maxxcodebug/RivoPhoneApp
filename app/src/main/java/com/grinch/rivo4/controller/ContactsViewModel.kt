@@ -40,17 +40,61 @@ class ContactsViewModel(
     private val _showPrivateOnly = MutableStateFlow(false)
     val showPrivateOnly = _showPrivateOnly.asStateFlow()
 
-    val filteredContacts = combine(_allContacts, _selectedAccount, _showPrivateOnly) { contacts, account, privateOnly ->
-        when {
+    private val _showLocalOnly = MutableStateFlow(false)
+    val showLocalOnly = _showLocalOnly.asStateFlow()
+
+    private val _visibleAccounts = MutableStateFlow<Set<String>?>(preferenceManager.getVisibleAccounts())
+    val visibleAccountsFlow = _visibleAccounts.asStateFlow()
+
+    private val _sortOrder = MutableStateFlow(preferenceManager.getInt(PreferenceManager.KEY_CONTACT_SORT_ORDER, 0))
+    val sortOrder = _sortOrder.asStateFlow()
+
+    private val _displayOrder = MutableStateFlow(preferenceManager.getInt(PreferenceManager.KEY_CONTACT_DISPLAY_ORDER, 0))
+    val displayOrder = _displayOrder.asStateFlow()
+
+    val filteredContacts = combine(
+        _allContacts,
+        _selectedAccount,
+        _showPrivateOnly,
+        _showLocalOnly,
+        _visibleAccounts,
+        _sortOrder
+    ) { args ->
+        val contacts = args[0] as List<Contact>
+        val account = args[1] as Account?
+        val privateOnly = args[2] as Boolean
+        val localOnly = args[3] as Boolean
+        val visibleAccounts = args[4] as Set<String>?
+        val sortOrder = args[5] as Int
+
+        val baseFiltered = when {
             privateOnly -> contacts.filter { it.isPrivate }
-            account == null -> contacts
+            localOnly -> contacts.filter { it.accountName == null && it.accountType == null }
+            account == null -> {
+                if (visibleAccounts == null) contacts
+                else contacts.filter { contact ->
+                    val key = if (contact.accountType == null && contact.accountName == null) "local|local" else "${contact.accountType}|${contact.accountName}"
+                    visibleAccounts.contains(key) || contact.isPrivate
+                }
+            }
             else -> contacts.filter { it.accountName == account.name && it.accountType == account.type }
+        }
+        
+        if (sortOrder == 1) {
+            baseFiltered.sortedBy { it.name.split(" ").lastOrNull()?.lowercase() ?: it.name.lowercase() }
+        } else {
+            baseFiltered.sortedBy { it.name.lowercase() }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val groupedContacts = filteredContacts.combine(MutableStateFlow(Unit)) { contacts, _ ->
+    val groupedContacts = combine(filteredContacts, _sortOrder) { contacts, sortOrder ->
         val mainGroups = contacts.groupBy {
-            val firstChar = it.name.firstOrNull()?.uppercaseChar() ?: '#'
+            val nameToUse = if (sortOrder == 1) {
+                it.name.split(" ").lastOrNull() ?: it.name
+            } else {
+                it.name
+            }
+            val firstChar = nameToUse.firstOrNull()?.uppercaseChar() ?: '#'
             if (firstChar.isLetter()) firstChar else '#'
         }.toMutableMap()
 
@@ -99,12 +143,45 @@ class ContactsViewModel(
 
     fun selectAccount(account: Account?) {
         _selectedAccount.value = account
-        if (account != null) _showPrivateOnly.value = false
+        if (account != null) {
+            _showPrivateOnly.value = false
+            _showLocalOnly.value = false
+        }
     }
 
     fun setShowPrivateOnly(show: Boolean) {
         _showPrivateOnly.value = show
-        if (show) _selectedAccount.value = null
+        if (show) {
+            _selectedAccount.value = null
+            _showLocalOnly.value = false
+        }
+    }
+
+    fun setShowLocalOnly(show: Boolean) {
+        _showLocalOnly.value = show
+        if (show) {
+            _selectedAccount.value = null
+            _showPrivateOnly.value = false
+        }
+    }
+
+    fun setVisibleAccounts(accounts: Set<String>?) {
+        if (accounts == null) {
+            preferenceManager.setString(PreferenceManager.KEY_VISIBLE_ACCOUNTS, null)
+        } else {
+            preferenceManager.setVisibleAccounts(accounts)
+        }
+        _visibleAccounts.value = accounts
+    }
+
+    fun setSortOrder(order: Int) {
+        preferenceManager.setInt(PreferenceManager.KEY_CONTACT_SORT_ORDER, order)
+        _sortOrder.value = order
+    }
+
+    fun setDisplayOrder(order: Int) {
+        preferenceManager.setInt(PreferenceManager.KEY_CONTACT_DISPLAY_ORDER, order)
+        _displayOrder.value = order
     }
 
     fun toggleFavorite(contact: Contact) {

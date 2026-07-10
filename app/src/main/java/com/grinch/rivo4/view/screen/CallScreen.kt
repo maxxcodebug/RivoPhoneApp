@@ -31,6 +31,8 @@ import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -40,9 +42,9 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import android.os.Build
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -55,9 +57,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.grinch.rivo4.controller.util.PreferenceManager
 import coil.compose.AsyncImage
 import com.grinch.rivo4.controller.CallService
-import com.grinch.rivo4.controller.util.PreferenceManager
 import com.grinch.rivo4.modal.`interface`.IContactsRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -65,6 +67,7 @@ import org.koin.compose.koinInject
 import java.util.*
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.seconds
 
 @Composable
 fun ExpressiveCallScreen(
@@ -83,6 +86,7 @@ fun ExpressiveCallScreen(
     
     val allCalls by CallService.allCalls.collectAsState()
     val otherCall = remember(allCalls, call) {
+        @Suppress("DEPRECATION")
         allCalls.find { it != call && it.state != Call.STATE_DISCONNECTED }
     }
 
@@ -119,12 +123,12 @@ fun ExpressiveCallScreen(
         preferenceManager.getBoolean(PreferenceManager.KEY_SHOW_CALL_SCREEN_AVATAR, true)
     }
 
-    LaunchedEffect(callState) {
+    LaunchedEffect(callState, call.details.connectTimeMillis) {
         if (callState == Call.STATE_ACTIVE) {
-            val startTime = System.currentTimeMillis() - (callDuration * 1000)
+            val connectTime = if (call.details.connectTimeMillis > 0) call.details.connectTimeMillis else System.currentTimeMillis()
             while (true) {
-                callDuration = (System.currentTimeMillis() - startTime) / 1000
-                delay(1000)
+                callDuration = (System.currentTimeMillis() - connectTime) / 1000
+                delay(1.seconds)
             }
         }
     }
@@ -135,7 +139,6 @@ fun ExpressiveCallScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         ExpressiveBackground(photoUri)
-        FloatingParticles()
 
         Column(
             modifier = Modifier
@@ -156,8 +159,8 @@ fun ExpressiveCallScreen(
                     LaunchedEffect(oc) {
                         val number = oc.details.handle?.schemeSpecificPart ?: ""
                         if (number.isNotEmpty()) {
-                            val contact = try { contactsRepo.getContactByNumber(number) } catch (e: Exception) { null }
-                            if (contact != null) ocName = contact.name
+                            val contact = try { contactsRepo.getContactByNumber(number) } catch (_: Exception) { null }
+                            if (contact != null) ocName = (contact as? com.grinch.rivo4.modal.data.Contact)?.name ?: number
                         }
                     }
                     
@@ -983,11 +986,19 @@ fun HorizontalSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit) {
                             coroutineScope.launch {
                                 when {
                                     offsetX.value > triggerThreshold -> {
-                                        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                        } else {
+                                            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                        }
                                         onAnswer()
                                     }
                                     offsetX.value < -triggerThreshold -> {
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                                         view.performHapticFeedback(HapticFeedbackConstants.REJECT)
+                                    } else {
+                                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    }
                                         onDecline()
                                     }
                                     else -> offsetX.animateTo(0f, spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMedium))
@@ -1014,7 +1025,10 @@ fun HorizontalSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit) {
                     tint = iconTint,
                     modifier = Modifier
                         .size(32.dp)
-                        .graphicsLayer { rotationZ = iconRotation }
+                        .graphicsLayer { 
+                            rotationZ = iconRotation 
+                            if (targetIcon == Icons.Default.Call) scaleY = -1f
+                        }
                 )
             }
         }
@@ -1156,11 +1170,19 @@ fun VerticalSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit) {
                                 coroutineScope.launch {
                                     when {
                                         offsetY.value < -triggerThreshold -> {
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                                             view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                        } else {
+                                            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                        }
                                             onAnswer()
                                         }
                                         offsetY.value > triggerThreshold -> {
-                                            view.performHapticFeedback(HapticFeedbackConstants.REJECT)
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                        view.performHapticFeedback(HapticFeedbackConstants.REJECT)
+                                    } else {
+                                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    }
                                             onDecline()
                                         }
                                         else -> offsetY.animateTo(0f, spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMedium))
@@ -1185,7 +1207,7 @@ fun VerticalSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit) {
                         targetIcon,
                         contentDescription = null,
                         tint = iconTint,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(36.dp).graphicsLayer(scaleY = if (targetIcon == Icons.Default.Call) -1f else 1f)
                     )
                 }
             }
@@ -1328,7 +1350,11 @@ fun IPhoneSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: 
                             onDragEnd = {
                                 coroutineScope.launch {
                                     if (offsetX.value > maxDrag * 0.85f) {
-                                        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                        } else {
+                                            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                        }
                                         onAnswer()
                                     } else {
                                         offsetX.animateTo(0f, spring(dampingRatio = 0.8f))
@@ -1349,7 +1375,7 @@ fun IPhoneSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: 
                     Icons.Default.Call,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(36.dp).graphicsLayer(scaleY = -1f)
                 )
             }
         }
@@ -1423,7 +1449,7 @@ fun IncomingCallButtons(onAnswer: () -> Unit, onDecline: () -> Unit) {
                     Icon(
                         Icons.Default.Call,
                         contentDescription = "Answer",
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(32.dp).graphicsLayer(scaleY = -1f)
                     )
                 }
             }

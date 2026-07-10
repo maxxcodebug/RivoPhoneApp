@@ -13,13 +13,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.grinch.rivo4.controller.ContactsViewModel
+import com.grinch.rivo4.controller.util.PreferenceManager
 import com.grinch.rivo4.modal.data.Contact
 import com.grinch.rivo4.view.components.RivoDialog
+import com.grinch.rivo4.view.components.RivoDivider
 import com.grinch.rivo4.view.components.RivoExpressiveCard
 import com.grinch.rivo4.view.components.RivoListItem
 import com.grinch.rivo4.view.components.RivoLoadingIndicatorView
+import com.grinch.rivo4.view.components.RivoSelectListItem
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
+import com.ramcosta.composedestinations.generated.destinations.ContactVisibilityScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.PrivateContactsScreenDestination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import org.koin.compose.viewmodel.koinActivityViewModel
@@ -87,6 +91,40 @@ fun ContactManagementScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
+                    val sortOrder by viewModel.sortOrder.collectAsState()
+                    val displayOrder by viewModel.displayOrder.collectAsState()
+                    
+                    RivoExpressiveCard(
+                        title = "Display & Sorting",
+                        icon = Icons.Outlined.DisplaySettings
+                    ) {
+                        RivoSelectListItem(
+                            headline = "Sort by",
+                            supporting = "Choose how contacts are ordered",
+                            leadingIcon = Icons.Outlined.SortByAlpha,
+                            options = listOf(
+                                "First Name" to 0,
+                                "Last Name" to 1
+                            ),
+                            selectedValue = sortOrder,
+                            onValueChange = { newValue: Int -> viewModel.setSortOrder(newValue) }
+                        )
+                        RivoDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                        RivoSelectListItem(
+                            headline = "Name format",
+                            supporting = "Choose how names are displayed",
+                            leadingIcon = Icons.Outlined.Badge,
+                            options = listOf(
+                                "First Name First" to 0,
+                                "Last Name First" to 1
+                            ),
+                            selectedValue = displayOrder,
+                            onValueChange = { newValue: Int -> viewModel.setDisplayOrder(newValue) }
+                        )
+                    }
+                }
+
+                item {
                     RivoExpressiveCard(
                         title = "Storage",
                         icon = Icons.Outlined.Storage
@@ -96,6 +134,13 @@ fun ContactManagementScreen(
                             supporting = "Manage contacts stored only in this app",
                             leadingIcon = Icons.Outlined.Lock,
                             onClick = { navigator.navigate(PrivateContactsScreenDestination) }
+                        )
+                        RivoDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                        RivoListItem(
+                            headline = "Visibility",
+                            supporting = "Choose which accounts to show in your list",
+                            leadingIcon = Icons.Outlined.Visibility,
+                            onClick = { navigator.navigate(ContactVisibilityScreenDestination) }
                         )
                     }
                 }

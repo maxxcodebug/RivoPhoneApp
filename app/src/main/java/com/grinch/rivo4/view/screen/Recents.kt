@@ -1,10 +1,7 @@
 package com.grinch.rivo4.view.screen
 
 import android.Manifest
-import android.content.Context
-import android.content.pm.PackageManager
 import android.provider.CallLog
-import android.telecom.TelecomManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.clickable
@@ -23,16 +20,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionStatus
 import com.google.accompanist.permissions.rememberPermissionState
 import com.grinch.rivo4.controller.CallLogViewModel
 import com.grinch.rivo4.controller.util.formatDateHeader
-import com.grinch.rivo4.controller.util.makeCall
-import com.grinch.rivo4.controller.util.formatPhoneNumber
-import com.grinch.rivo4.controller.util.areNumbersEqual
 import com.grinch.rivo4.view.components.*
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -169,6 +162,54 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
     }
 }
 
+@Composable
+fun FavoriteCircleItem(
+    contact: Contact,
+    isEditing: Boolean = false,
+    displayOrder: Int = 0,
+    onUnfavorite: () -> Unit = {},
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(72.dp)
+            .clickable(enabled = !isEditing, onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(contentAlignment = Alignment.TopEnd) {
+            RivoAvatar(
+                name = contact.name,
+                photoUri = contact.photoUri,
+                modifier = Modifier.size(64.dp)
+            )
+            
+            if (isEditing) {
+                Surface(
+                    onClick = onUnfavorite,
+                    modifier = Modifier.size(20.dp).offset(x = 4.dp, y = (-4).dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError,
+                    shadowElevation = 2.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Remove, null, modifier = Modifier.size(14.dp))
+                    }
+                }
+            }
+        }
+        Text(
+            text = com.grinch.rivo4.controller.util.ContactUtils.formatContactName(contact.name, displayOrder).split(" ").firstOrNull() ?: "",
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CallLogFullContent(
@@ -217,6 +258,7 @@ fun CallLogFullContent(
         val context = LocalContext.current
         val callLauncher = rememberCallLauncher()
         val blockLogVisibility = prefs.getInt(com.grinch.rivo4.controller.util.PreferenceManager.KEY_BLOCK_LOG_VISIBILITY, 0)
+        val displayOrder = remember(settingsState) { prefs.getInt(com.grinch.rivo4.controller.util.PreferenceManager.KEY_CONTACT_DISPLAY_ORDER, 0) }
 
         val filteredLogs = remember(logs, selectedFilter, blockLogVisibility) {
             val baseLogs = if (blockLogVisibility == 0) logs.filter { !it.isBlocked } else logs
@@ -282,19 +324,25 @@ fun CallLogFullContent(
                                         }
                                     }
                                 )
-                                IPhoneFavoritesRow(
-                                    favorites = favorites,
-                                    isEditing = isEditingFavorites,
-                                    onUnfavorite = { contact ->
-                                        contactsVM.toggleFavorite(contact)
-                                    },
-                                    onSaveOrder = { newOrder ->
-                                        prefs.setFavoritesOrder(newOrder)
-                                    },
-                                    onClick = { contact ->
-                                        callLauncher.dial(contact.phoneNumbers.firstOrNull() ?: "", contact)
+                                LazyRow(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp),
+                                    contentPadding = PaddingValues(horizontal = 16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    items(favorites) { contact ->
+                                        FavoriteCircleItem(
+                                            contact = contact,
+                                            isEditing = isEditingFavorites,
+                                            displayOrder = displayOrder,
+                                            onUnfavorite = { contactsVM.toggleFavorite(contact) },
+                                            onClick = {
+                                                callLauncher.dial(contact.phoneNumbers.firstOrNull() ?: "", contact)
+                                            }
+                                        )
                                     }
-                                )
+                                }
                                 Spacer(modifier = Modifier.height(12.dp))
                             }
                         }
@@ -307,6 +355,7 @@ fun CallLogFullContent(
                                         logsInGroup.forEachIndexed { index, lg ->
                                             CallLogTile(
                                                 log = lg,
+                                                displayOrder = displayOrder,
                                                 onTileClick = { log ->
                                                     if (selectedEntries.isNotEmpty()) {
                                                         onToggleSelection(log)
@@ -350,36 +399,6 @@ fun CallLogFullContent(
         )
     }
 }
-
-@Composable
-fun FavoriteCircleItem(
-    contact: Contact,
-    onClick: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .width(72.dp)
-            .clickable(onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        RivoAvatar(
-            name = contact.name,
-            photoUri = contact.photoUri,
-            modifier = Modifier.size(64.dp),
-            badgeIcon = Icons.Default.Call
-        )
-        Text(
-            text = contact.name.split(" ").firstOrNull() ?: "",
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-    }
-}
-
 
 @Composable
 fun EmptyCallLogsState() {
