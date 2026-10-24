@@ -1,10 +1,16 @@
 package com.grinch.rivo4.view.screen.settings
+import com.grinch.rivo4.view.components.RivoResetButton
+import com.grinch.rivo4.view.components.MenuTopAppBar
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.grinch.rivo4.controller.util.SettingsHighlightManager
+import kotlinx.coroutines.delay
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.*
@@ -20,7 +26,9 @@ import com.grinch.rivo4.R
 import com.grinch.rivo4.controller.util.PreferenceManager
 import com.grinch.rivo4.view.components.RivoDivider
 import com.grinch.rivo4.view.components.RivoExpressiveCard
+import com.grinch.rivo4.view.components.RivoExpressiveGroup
 import com.grinch.rivo4.view.components.RivoInteractiveFloatingBarSlider
+import com.grinch.rivo4.view.components.RivoSwitch
 import com.grinch.rivo4.view.components.RivoSwitchListItem
 import com.grinch.rivo4.view.components.RivoVisualOptionSelectorRow
 import com.grinch.rivo4.view.components.navigationTabIcon
@@ -60,6 +68,9 @@ fun BottomNavScreen(
     var mergeFavorites by remember(settingsState) {
         mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_MERGE_FAVORITES_RECENTS, true))
     }
+    var predictiveBackEnabled by remember(settingsState) {
+        mutableStateOf(prefs.isPredictiveBackEnabled())
+    }
 
     val visibleTabs = order.filter { !hidden.contains(it) }
 
@@ -79,261 +90,299 @@ fun BottomNavScreen(
         persist(mutable, hidden)
     }
 
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(SettingsHighlightManager.highlightEpoch) {
+        if (SettingsHighlightManager.highlightEpoch == 0L) return@LaunchedEffect
+        val target = SettingsHighlightManager.highlightedSettingTitle ?: return@LaunchedEffect
+        val targetIndex = when {
+            target.contains("Style", ignoreCase = true) ||
+            target.contains("Roundness", ignoreCase = true) ||
+            target.contains("Icon-Only", ignoreCase = true) -> 0
+
+            target.contains("Button", ignoreCase = true) ||
+            target.contains("Tab", ignoreCase = true) ||
+            target.contains("Start Screen", ignoreCase = true) ||
+            target.contains("Favorites", ignoreCase = true) ||
+            target.contains("Predictive", ignoreCase = true) -> 1
+
+            else -> -1
+        }
+        if (targetIndex >= 0) {
+            delay(150L)
+            listState.animateScrollToItem(targetIndex)
+        }
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Navigation Bar", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = { navigator.navigateUp() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                    }
-                }
+            MenuTopAppBar(
+                text = stringResource(R.string.settings_bottom_nav_title),
+                navigator = navigator
             )
         },
         containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             // 1. Style & Appearance
             item {
-                RivoExpressiveCard(title = "Style & Appearance") {
-                    RivoVisualOptionSelectorRow(
-                        headline = stringResource(R.string.settings_interface_nav_bar_style),
-                        supporting = stringResource(R.string.settings_interface_nav_bar_style_supporting),
-                        leadingIcon = Icons.Outlined.Dock,
-                        options = listOf(
-                            stringResource(R.string.settings_nav_bar_standard) to PreferenceManager.NAV_BAR_STYLE_STANDARD,
-                            stringResource(R.string.settings_nav_bar_toolbar) to PreferenceManager.NAV_BAR_STYLE_TOOLBAR
-                        ),
-                        selectedValue = navBarStyle,
-                        onValueChange = {
-                            navBarStyle = it
-                            prefs.setInt(PreferenceManager.KEY_NAV_BAR_STYLE, it)
+                RivoExpressiveGroup(
+                    title = stringResource(R.string.settings_group_style_appearance),
+                    icon = Icons.Outlined.Dock
+                ) {
+                    item {
+                        RivoVisualOptionSelectorRow(
+                            headline = stringResource(R.string.settings_interface_nav_bar_style),
+                            supporting = stringResource(R.string.settings_interface_nav_bar_style_supporting),
+                            leadingIcon = Icons.Outlined.Dock,
+                            options = listOf(
+                                stringResource(R.string.settings_nav_bar_standard) to PreferenceManager.NAV_BAR_STYLE_STANDARD,
+                                stringResource(R.string.settings_nav_bar_toolbar) to PreferenceManager.NAV_BAR_STYLE_TOOLBAR
+                            ),
+                            selectedValue = navBarStyle,
+                            onValueChange = {
+                                navBarStyle = it
+                                prefs.setInt(PreferenceManager.KEY_NAV_BAR_STYLE, it)
+                            }
+                        ) { value, selected ->
+                            val icon = if (value == PreferenceManager.NAV_BAR_STYLE_TOOLBAR) Icons.Outlined.DashboardCustomize else Icons.Outlined.ViewStream
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                    ) { value, selected ->
-                        val icon = if (value == PreferenceManager.NAV_BAR_STYLE_TOOLBAR) Icons.Outlined.DashboardCustomize else Icons.Outlined.ViewStream
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
 
                     if (navBarStyle == PreferenceManager.NAV_BAR_STYLE_TOOLBAR) {
-                        RivoDivider(Modifier.padding(horizontal = 16.dp))
-                        RivoInteractiveFloatingBarSlider(
-                            headline = stringResource(R.string.settings_floating_bar_roundness),
-                            supporting = stringResource(R.string.settings_floating_bar_roundness_supporting),
-                            value = floatingBarRoundness.toFloat(),
-                            iconOnly = iconOnly,
-                            onValueChange = { floatingBarRoundness = it.roundToInt() },
-                            onValueChangeFinished = {
-                                prefs.setFloatingBarRoundness(floatingBarRoundness)
-                            }
-                        )
+                        item {
+                            RivoInteractiveFloatingBarSlider(
+                                headline = stringResource(R.string.settings_floating_bar_roundness),
+                                supporting = stringResource(R.string.settings_floating_bar_roundness_supporting),
+                                value = floatingBarRoundness.toFloat(),
+                                iconOnly = iconOnly,
+                                onValueChange = { floatingBarRoundness = it.roundToInt() },
+                                onValueChangeFinished = {
+                                    prefs.setFloatingBarRoundness(floatingBarRoundness)
+                                }
+                            )
+                        }
                     }
                 }
             }
 
             // 2. Tab Layout & Buttons
             item {
-                RivoExpressiveCard(title = stringResource(R.string.settings_bottom_nav_buttons)) {
-                    Text(
-                        text = stringResource(R.string.settings_bottom_nav_description),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                    RivoDivider(Modifier.padding(horizontal = 16.dp))
+                RivoExpressiveGroup(
+                    title = stringResource(R.string.settings_bottom_nav_buttons),
+                    icon = Icons.Outlined.Layers
+                ) {
                     order.forEachIndexed { index, tabId ->
                         val isVisible = !hidden.contains(tabId)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(
-                                modifier = Modifier.size(44.dp),
-                                shape = RoundedCornerShape(14.dp),
-                                color = MaterialTheme.colorScheme.secondaryContainer
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        navigationTabIcon(tabId),
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                        modifier = Modifier.size(20.dp)
+                                Surface(
+                                    modifier = Modifier.size(44.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.secondaryContainer
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            navigationTabIcon(tabId),
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = navigationTabLabel(tabId),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = if (isVisible) {
+                                            stringResource(R.string.settings_bottom_nav_position, visibleTabs.indexOf(tabId) + 1)
+                                        } else {
+                                            stringResource(R.string.settings_bottom_nav_hidden)
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = navigationTabLabel(tabId),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = if (isVisible) {
-                                        stringResource(R.string.settings_bottom_nav_position, visibleTabs.indexOf(tabId) + 1)
-                                    } else {
-                                        stringResource(R.string.settings_bottom_nav_hidden)
-                                    },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = { move(index, -1) },
-                                enabled = index > 0
-                            ) {
-                                Icon(
-                                    Icons.Default.KeyboardArrowUp,
-                                    contentDescription = stringResource(R.string.settings_bottom_nav_move_up)
-                                )
-                            }
-                            IconButton(
-                                onClick = { move(index, 1) },
-                                enabled = index < order.lastIndex
-                            ) {
-                                Icon(
-                                    Icons.Default.KeyboardArrowDown,
-                                    contentDescription = stringResource(R.string.settings_bottom_nav_move_down)
-                                )
-                            }
-                            Switch(
-                                checked = isVisible,
-                                enabled = !isVisible || visibleTabs.size > 1,
-                                onCheckedChange = { checked ->
-                                    val newHidden = if (checked) hidden - tabId else hidden + tabId
-                                    persist(order, newHidden)
+                                IconButton(
+                                    onClick = { move(index, -1) },
+                                    enabled = index > 0
+                                ) {
+                                    Icon(
+                                        Icons.Default.KeyboardArrowUp,
+                                        contentDescription = stringResource(R.string.settings_bottom_nav_move_up)
+                                    )
                                 }
-                            )
-                        }
-                        if (index < order.lastIndex) {
-                            RivoDivider(Modifier.padding(horizontal = 16.dp))
-                        }
-                    }
-                    RivoDivider(Modifier.padding(horizontal = 16.dp))
-                    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        OutlinedButton(
-                            onClick = {
-                                prefs.resetBottomNavLayout()
-                                order = prefs.getBottomNavOrder()
-                                hidden = prefs.getHiddenBottomNavTabs()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = MaterialTheme.shapes.large
-                        ) {
-                            Icon(Icons.Outlined.Restore, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(stringResource(R.string.settings_bottom_nav_reset))
+                                IconButton(
+                                    onClick = { move(index, 1) },
+                                    enabled = index < order.lastIndex
+                                ) {
+                                    Icon(
+                                        Icons.Default.KeyboardArrowDown,
+                                        contentDescription = stringResource(R.string.settings_bottom_nav_move_down)
+                                    )
+                                }
+                                RivoSwitch(
+                                    checked = isVisible,
+                                    enabled = !isVisible || visibleTabs.size > 1,
+                                    onCheckedChange = { checked ->
+                                        val newHidden = if (checked) hidden - tabId else hidden + tabId
+                                        persist(order, newHidden)
+                                    }
+                                )
+                            }
                         }
                     }
                 }
+            }
+
+            item {
+                RivoResetButton(
+                    onClick = {
+                        prefs.resetBottomNavLayout()
+                        order = prefs.getBottomNavOrder()
+                        hidden = prefs.getHiddenBottomNavTabs()
+                    },
+                    text = stringResource(R.string.settings_bottom_nav_reset),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
             }
 
             // 3. Behavior & Defaults
             item {
-                RivoExpressiveCard(title = "Behavior & Defaults") {
-                    RivoSwitchListItem(
-                        headline = stringResource(R.string.settings_interface_icon_only_bar),
-                        supporting = stringResource(R.string.settings_interface_icon_only_bar_supporting),
-                        leadingIcon = Icons.Outlined.ViewStream,
-                        checked = iconOnly,
-                        onCheckedChange = {
-                            iconOnly = it
-                            prefs.setBoolean(PreferenceManager.KEY_ICON_ONLY_NAV, it)
-                        }
-                    )
-                    RivoDivider(Modifier.padding(horizontal = 16.dp))
-                    RivoVisualOptionSelectorRow(
-                        headline = stringResource(R.string.settings_interface_default_bottom_bar),
-                        supporting = stringResource(R.string.settings_interface_default_bottom_bar_supporting),
-                        leadingIcon = Icons.Outlined.SpaceDashboard,
-                        options = listOf(
-                            stringResource(R.string.nav_recents) to PreferenceManager.TAB_RECENTS,
-                            stringResource(R.string.nav_favorites) to PreferenceManager.TAB_FAVORITES,
-                            stringResource(R.string.nav_contacts) to PreferenceManager.TAB_CONTACTS,
-                            stringResource(R.string.nav_call_recordings) to PreferenceManager.TAB_RECORDINGS
-                        ),
-                        selectedValue = defaultBottomBar,
-                        onValueChange = {
-                            defaultBottomBar = it
-                            prefs.setInt(PreferenceManager.KEY_DEFAULT_BOTTOM_NAV, it)
-                            if (it == PreferenceManager.TAB_RECORDINGS) {
-                                val currentHidden = prefs.getHiddenBottomNavTabs().toMutableSet()
-                                if (currentHidden.remove(PreferenceManager.TAB_RECORDINGS)) {
-                                    prefs.setHiddenBottomNavTabs(currentHidden)
-                                    hidden = currentHidden
+                RivoExpressiveGroup(title = stringResource(R.string.settings_behavior_defaults), icon = Icons.Outlined.Tune) {
+                    item {
+                        RivoSwitchListItem(
+                            headline = stringResource(R.string.settings_interface_icon_only_bar),
+                            supporting = stringResource(R.string.settings_interface_icon_only_bar_supporting),
+                            leadingIcon = Icons.Outlined.ViewStream,
+                            checked = iconOnly,
+                            onCheckedChange = {
+                                iconOnly = it
+                                prefs.setBoolean(PreferenceManager.KEY_ICON_ONLY_NAV, it)
+                            }
+                        )
+                    }
+                    item {
+                        Box(modifier = Modifier.padding(vertical = 4.dp)) {
+                            RivoVisualOptionSelectorRow(
+                                headline = stringResource(R.string.settings_interface_default_bottom_bar),
+                                supporting = stringResource(R.string.settings_interface_default_bottom_bar_supporting),
+                                leadingIcon = Icons.Outlined.SpaceDashboard,
+                                options = listOf(
+                                    stringResource(R.string.nav_recents) to PreferenceManager.TAB_RECENTS,
+                                    stringResource(R.string.nav_favorites) to PreferenceManager.TAB_FAVORITES,
+                                    stringResource(R.string.nav_contacts) to PreferenceManager.TAB_CONTACTS,
+                                    stringResource(R.string.nav_call_recordings) to PreferenceManager.TAB_RECORDINGS
+                                ),
+                                selectedValue = defaultBottomBar,
+                                onValueChange = {
+                                    defaultBottomBar = it
+                                    prefs.setInt(PreferenceManager.KEY_DEFAULT_BOTTOM_NAV, it)
+                                    if (it == PreferenceManager.TAB_RECORDINGS) {
+                                        val currentHidden = prefs.getHiddenBottomNavTabs().toMutableSet()
+                                        if (currentHidden.remove(PreferenceManager.TAB_RECORDINGS)) {
+                                            prefs.setHiddenBottomNavTabs(currentHidden)
+                                            hidden = currentHidden
+                                        }
+                                    }
                                 }
+                            ) { value, selected ->
+                                val icon = when (value) {
+                                    PreferenceManager.TAB_FAVORITES -> Icons.Outlined.Star
+                                    PreferenceManager.TAB_CONTACTS -> Icons.Outlined.Person
+                                    PreferenceManager.TAB_RECORDINGS -> Icons.Outlined.Mic
+                                    else -> Icons.Outlined.History
+                                }
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
-                    ) { value, selected ->
-                        val icon = when (value) {
-                            PreferenceManager.TAB_FAVORITES -> Icons.Outlined.Star
-                            PreferenceManager.TAB_CONTACTS -> Icons.Outlined.Person
-                            PreferenceManager.TAB_RECORDINGS -> Icons.Outlined.Mic
-                            else -> Icons.Outlined.History
+                    }
+                    item {
+                        Box(modifier = Modifier.padding(vertical = 4.dp)) {
+                            RivoVisualOptionSelectorRow(
+                                headline = stringResource(R.string.settings_default_start_screen),
+                                supporting = stringResource(R.string.settings_default_start_screen_supporting),
+                                leadingIcon = Icons.Outlined.Home,
+                                options = listOf(
+                                    "Default Tab" to PreferenceManager.START_LOCATION_NORMAL,
+                                    "Dialpad (Recents)" to PreferenceManager.START_LOCATION_DIALPAD_RECENTS,
+                                    "Dialpad (Contacts)" to PreferenceManager.START_LOCATION_DIALPAD_CONTACTS
+                                ),
+                                selectedValue = startLocation,
+                                onValueChange = {
+                                    startLocation = it
+                                    prefs.setInt(PreferenceManager.KEY_START_LOCATION, it)
+                                }
+                            ) { value, selected ->
+                                val icon = when (value) {
+                                    PreferenceManager.START_LOCATION_DIALPAD_RECENTS,
+                                    PreferenceManager.START_LOCATION_DIALPAD_CONTACTS -> Icons.Outlined.Dialpad
+                                    else -> Icons.Outlined.Home
+                                }
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    item {
+                        RivoSwitchListItem(
+                            headline = stringResource(R.string.settings_interface_merge_favorites),
+                            supporting = stringResource(R.string.settings_interface_merge_favorites_supporting),
+                            leadingIcon = Icons.Outlined.Star,
+                            checked = mergeFavorites,
+                            onCheckedChange = {
+                                mergeFavorites = it
+                                prefs.setBoolean(PreferenceManager.KEY_MERGE_FAVORITES_RECENTS, it)
+                            }
                         )
                     }
-                    RivoDivider(Modifier.padding(horizontal = 16.dp))
-                    RivoVisualOptionSelectorRow(
-                        headline = "Default Start Screen",
-                        supporting = "Screen to display when opening the app",
-                        leadingIcon = Icons.Outlined.Home,
-                        options = listOf(
-                            "Default Tab" to PreferenceManager.START_LOCATION_NORMAL,
-                            "Dialpad (Recents)" to PreferenceManager.START_LOCATION_DIALPAD_RECENTS,
-                            "Dialpad (Contacts)" to PreferenceManager.START_LOCATION_DIALPAD_CONTACTS
-                        ),
-                        selectedValue = startLocation,
-                        onValueChange = {
-                            startLocation = it
-                            prefs.setInt(PreferenceManager.KEY_START_LOCATION, it)
-                        }
-                    ) { value, selected ->
-                        val icon = when (value) {
-                            PreferenceManager.START_LOCATION_DIALPAD_RECENTS,
-                            PreferenceManager.START_LOCATION_DIALPAD_CONTACTS -> Icons.Outlined.Dialpad
-                            else -> Icons.Outlined.Home
-                        }
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    item {
+                        RivoSwitchListItem(
+                            headline = stringResource(R.string.settings_predictive_back_title),
+                            supporting = stringResource(R.string.settings_predictive_back_supporting),
+                            leadingIcon = Icons.AutoMirrored.Outlined.ArrowBack,
+                            checked = predictiveBackEnabled,
+                            onCheckedChange = {
+                                predictiveBackEnabled = it
+                                prefs.setPredictiveBackEnabled(it)
+                            }
                         )
                     }
-                    RivoDivider(Modifier.padding(horizontal = 16.dp))
-                    RivoSwitchListItem(
-                        headline = stringResource(R.string.settings_interface_merge_favorites),
-                        supporting = stringResource(R.string.settings_interface_merge_favorites_supporting),
-                        leadingIcon = Icons.Outlined.Star,
-                        checked = mergeFavorites,
-                        onCheckedChange = {
-                            mergeFavorites = it
-                            prefs.setBoolean(PreferenceManager.KEY_MERGE_FAVORITES_RECENTS, it)
-                        }
-                    )
                 }
             }
 
             item {
-                com.grinch.rivo4.view.components.ad.BannerAd()
             }
 
             item {

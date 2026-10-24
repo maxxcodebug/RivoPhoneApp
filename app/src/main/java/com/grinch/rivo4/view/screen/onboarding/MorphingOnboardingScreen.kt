@@ -7,10 +7,6 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.icons.outlined.GraphicEq
-import androidx.compose.material3.AlertDialog
-import com.grinch.rivo4.controller.shizuku.ShizukuConnectionManager
-import rikka.shizuku.Shizuku
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
@@ -39,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Dialpad
@@ -46,7 +43,10 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.outlined.CheckCircleOutline
+import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Shop
 import androidx.compose.material.icons.outlined.Stars
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -83,7 +83,10 @@ import com.grinch.rivo4.R
 import com.grinch.rivo4.controller.permission.PermissionActionType
 import com.grinch.rivo4.controller.permission.PermissionCheckItem
 import com.grinch.rivo4.controller.permission.PermissionChecklistHelper
+import com.grinch.rivo4.controller.shizuku.ShizukuConnectionManager
 import com.grinch.rivo4.controller.util.getDefaultDialerIntent
+import com.grinch.rivo4.view.components.RivoDialog
+import com.grinch.rivo4.view.components.RivoDialogAction
 import com.grinch.rivo4.view.components.TipJarDialog
 import com.grinch.rivo4.view.theme.LocalCardRoundness
 import com.grinch.rivo4.view.theme.RivoMaterialShapes
@@ -92,6 +95,7 @@ import com.grinch.rivo4.view.theme.RivoMotion
 import com.grinch.rivo4.view.theme.rememberRivoMorph
 import com.grinch.rivo4.view.theme.rememberRivoMorphShape
 import com.grinch.rivo4.view.theme.rivoCornerDp
+import rikka.shizuku.Shizuku
 
 data class MorphingPage(
     val icon: ImageVector,
@@ -228,10 +232,19 @@ fun MorphingOnboardingScreen(onFinished: () -> Unit) {
                 settingsLauncher.launch(PermissionChecklistHelper.getBatteryOptimizationIntent(context))
             }
             PermissionActionType.SETTINGS -> {
-                if (item.id == "vivo_background_popup") {
-                    com.grinch.rivo4.controller.util.OemPermissionHelper.openBackgroundPopupPermission(context)
-                } else {
-                    settingsLauncher.launch(PermissionChecklistHelper.getAppSettingsIntent(context))
+                when (item.id) {
+                    "xiaomi_lockscreen", "xiaomi_background_popup" -> {
+                        com.grinch.rivo4.controller.util.OemPermissionHelper.openXiaomiLockscreenSettings(context)
+                    }
+                    "oem_autostart" -> {
+                        com.grinch.rivo4.controller.util.OemPermissionHelper.openAutostartSettings(context)
+                    }
+                    "vivo_background_popup", "oem_lockscreen_popup" -> {
+                        com.grinch.rivo4.controller.util.OemPermissionHelper.openBackgroundPopupPermission(context)
+                    }
+                    else -> {
+                        settingsLauncher.launch(PermissionChecklistHelper.getAppSettingsIntent(context))
+                    }
                 }
             }
             PermissionActionType.RUNTIME -> {
@@ -277,67 +290,36 @@ fun MorphingOnboardingScreen(onFinished: () -> Unit) {
     }
 
     fun enableRecommended() {
-        val ungrantedRuntime = mutableListOf<String>()
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
-            !PermissionChecklistHelper.hasNotificationPermission(context)
-        ) {
-            ungrantedRuntime.add(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
-        if (!PermissionChecklistHelper.hasAudioRecordPermission(context)) {
-            ungrantedRuntime.add(android.Manifest.permission.RECORD_AUDIO)
-        }
-
-        if (ungrantedRuntime.isNotEmpty()) {
-            singleRuntimeLauncher.launch(ungrantedRuntime.toTypedArray())
-        } else if (!PermissionChecklistHelper.hasStoragePermission(context)) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                storageLauncher.launch(PermissionChecklistHelper.getStorageAccessIntent(context))
-            } else {
-                singleRuntimeLauncher.launch(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE))
-            }
-        } else if (!PermissionChecklistHelper.hasOverlayPermission(context)) {
-            settingsLauncher.launch(PermissionChecklistHelper.getOverlayIntent(context))
-        } else if (!PermissionChecklistHelper.isBatteryOptimizationIgnored(context)) {
-            settingsLauncher.launch(PermissionChecklistHelper.getBatteryOptimizationIntent(context))
-        } else if (PermissionChecklistHelper.isShizukuRunning() && !PermissionChecklistHelper.hasShizukuPermission(context)) {
-            ShizukuConnectionManager.requestPermission()
+        val nextUngranted = recommendedItems.firstOrNull { !it.isGranted && it.isEnabled }
+        if (nextUngranted != null) {
+            handlePermissionItemClick(nextUngranted)
         }
     }
 
     if (showShizukuInstallDialog) {
-        AlertDialog(
+        RivoDialog(
             onDismissRequest = { showShizukuInstallDialog = false },
-            icon = {
-                Icon(
-                    imageVector = Icons.Outlined.GraphicEq,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            },
-            title = {
+            title = stringResource(R.string.install_shizuku_title),
+            icon = Icons.Outlined.GraphicEq,
+            dismissAction = RivoDialogAction(
+                label = stringResource(R.string.action_cancel),
+                onClick = { showShizukuInstallDialog = false }
+            )
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(
-                    text = "Install Shizuku",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
+                    text = "Shizuku enables crystal-clear 2-way call audio capture directly from Android system audio without rooting your device.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            },
-            text = {
-                Column {
-                    Text(
-                        text = "Shizuku enables crystal-clear 2-way call audio capture directly from Android system audio without rooting your device.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        text = "Select an installation source:",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
+                Text(
+                    text = "Select an installation source:",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Surface(
                     onClick = {
                         showShizukuInstallDialog = false
                         try {
@@ -351,36 +333,76 @@ fun MorphingOnboardingScreen(onFinished: () -> Unit) {
                             }
                             context.startActivity(webIntent)
                         }
-                    }
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Google Play")
-                }
-            },
-            dismissButton = {
-                Row {
-                    OutlinedButton(
-                        onClick = {
-                            showShizukuInstallDialog = false
-                            val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/")).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(webIntent)
-                        }
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Website / APK")
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Outlined.Shop, contentDescription = null, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.shizuku_google_play), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.shizuku_recommended_updates), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                        }
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    TextButton(onClick = { showShizukuInstallDialog = false }) {
-                        Text("Cancel")
+                }
+
+                Surface(
+                    onClick = {
+                        showShizukuInstallDialog = false
+                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/")).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(webIntent)
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Outlined.Language, contentDescription = null, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.shizuku_official_website), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.shizuku_download_directly), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
                     }
                 }
             }
-        )
+        }
     }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.surfaceContainerLow
+        color = MaterialTheme.colorScheme.surface
     ) {
         AnimatedContent(
             targetState = currentStage,
@@ -702,7 +724,6 @@ private fun EssentialPermissionsStage(
             )
 
             Spacer(modifier = Modifier.height(20.dp))
-
             PermissionsChecklistCard(
                 items = items,
                 onItemClick = onItemClick
@@ -844,7 +865,6 @@ private fun RecommendedPermissionsStage(
             )
 
             Spacer(modifier = Modifier.height(20.dp))
-
             PermissionsChecklistCard(
                 items = items,
                 onItemClick = onItemClick
@@ -941,7 +961,6 @@ private fun SetupCompleteStage(
         }
 
         Spacer(modifier = Modifier.height(20.dp))
-
         Text(
             text = "You're All Set!",
             style = MaterialTheme.typography.headlineMedium,
@@ -961,7 +980,6 @@ private fun SetupCompleteStage(
         )
 
         Spacer(modifier = Modifier.height(20.dp))
-
         // Open Source & Privacy Card
         Surface(
             modifier = Modifier.fillMaxWidth(),

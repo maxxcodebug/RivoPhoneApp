@@ -3,6 +3,7 @@ package com.grinch.rivo4.controller.util
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.util.Log
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
@@ -25,6 +26,7 @@ object CallBackgroundStore {
 
     private const val DIRECTORY = "call_backgrounds"
     private const val DEFAULT_KEY = "default"
+    private const val UNKNOWN_KEY = "unknown_numbers"
     private const val FILE_PREFIX = "bg_"
     private const val FILE_SUFFIX = ".jpg"
     private const val JPEG_QUALITY = 92
@@ -239,6 +241,46 @@ object CallBackgroundStore {
         }
     }
 
+    suspend fun saveUnknown(context: Context, source: Uri): Boolean =
+        withContext(Dispatchers.IO) {
+            val app = context.applicationContext
+            val manager = prefs(app)
+            val imported = importImage(app, source) ?: return@withContext false
+            manager.updateContactBackgroundEntries(
+                mapOf(manager.contactBackgroundIdKey(UNKNOWN_KEY) to imported.absolutePath)
+            )
+            collectGarbage(app, manager)
+            true
+        }
+
+    fun hasUnknown(context: Context): Boolean {
+        return prefs(context.applicationContext).getContactBackground(UNKNOWN_KEY) != null
+    }
+
+    fun unknownModel(context: Context): String? {
+        val manager = prefs(context.applicationContext)
+        val stored = manager.getContactBackground(UNKNOWN_KEY) ?: return null
+        return cachedModel(stored)
+    }
+
+    suspend fun unknownModelAsync(context: Context): String? = withContext(Dispatchers.IO) {
+        val app = context.applicationContext
+        val manager = prefs(app)
+        val stored = manager.getContactBackground(UNKNOWN_KEY) ?: return@withContext null
+        materialize(app, manager, stored)
+    }
+
+    fun clearUnknown(context: Context) {
+        val app = context.applicationContext
+        val manager = prefs(app)
+        if (manager.getContactBackground(UNKNOWN_KEY) != null) {
+            manager.updateContactBackgroundEntries(
+                mapOf(manager.contactBackgroundIdKey(UNKNOWN_KEY) to null)
+            )
+            scheduleGarbageCollection(app, manager)
+        }
+    }
+
     suspend fun clear(context: Context, contactId: String?, numbers: List<String>) {
         withContext(Dispatchers.IO) { clearBlocking(context, contactId, numbers) }
     }
@@ -429,7 +471,7 @@ object CallBackgroundStore {
                 val file = File(path)
                 fileState[path] = file.exists() && file.length() > 0L
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("CallBackgroundStore", "Error in verifyAsync: ${e.message}", e)
             } finally {
                 pendingChecks.remove(path)
             }
@@ -480,7 +522,7 @@ object CallBackgroundStore {
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("CallBackgroundStore", "Error pruneStaleIdKeys: ${e.message}", e)
         }
     }
 
@@ -541,7 +583,7 @@ object CallBackgroundStore {
         val bitmap = try {
             decodeScaled(context, source, targetSize(context))
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("CallBackgroundStore", "Error decodeScaled: ${e.message}", e)
             null
         } ?: return copyRaw(context, dir, source)
         return try {
@@ -559,7 +601,7 @@ object CallBackgroundStore {
                 target
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("CallBackgroundStore", "Error importImage: ${e.message}", e)
             null
         } finally {
             bitmap.recycle()
@@ -584,7 +626,7 @@ object CallBackgroundStore {
                 target
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("CallBackgroundStore", "Error targetSize: ${e.message}", e)
             null
         }
     }

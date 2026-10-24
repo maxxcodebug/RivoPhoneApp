@@ -7,6 +7,11 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.telecom.CallAudioState
 import android.os.PowerManager
 import android.telecom.Call
 import android.telecom.TelecomManager
@@ -17,6 +22,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -50,6 +56,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import com.grinch.rivo4.controller.util.formatPhoneNumber
 
 private data class CallIdentity(
     val number: String,
@@ -68,12 +77,52 @@ class CallActivity : ComponentActivity() {
     private val contactsRepo: IContactsRepository by inject()
     private val preferenceManager: PreferenceManager by inject()
     private var proximityWakeLock: PowerManager.WakeLock? = null
+    private var proximitySensorManager: SensorManager? = null
+    private var proximitySensor: Sensor? = null
+    private var isProximityListenerRegistered = false
+    private val proximityListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent?) {
+            if (event == null || event.values.isEmpty()) return
+            if (!preferenceManager.isAutoSpeakerProximityEnabled()) return
+
+            val hasActiveCall = CallService.allCalls.value.any { it.state == Call.STATE_ACTIVE }
+            if (!hasActiveCall) return
+
+            val audioState = CallService.audioState.value
+            val isHeadsetOrBt = audioState?.let {
+                it.route == CallAudioState.ROUTE_WIRED_HEADSET ||
+                it.route == CallAudioState.ROUTE_BLUETOOTH ||
+                (it.supportedRouteMask and CallAudioState.ROUTE_WIRED_HEADSET) != 0 ||
+                it.activeBluetoothDevice != null
+            } ?: false
+
+            if (isHeadsetOrBt) return
+
+            val maxRange = proximitySensor?.maximumRange ?: 5f
+            val distance = event.values[0]
+            val isNear = distance < maxRange.coerceAtMost(5f)
+
+            if (isNear) {
+                if (audioState?.route != CallAudioState.ROUTE_EARPIECE) {
+                    CallService.setAudioRoute(CallAudioState.ROUTE_EARPIECE)
+                }
+            } else {
+                if (audioState?.route != CallAudioState.ROUTE_SPEAKER) {
+                    CallService.setAudioRoute(CallAudioState.ROUTE_SPEAKER)
+                }
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
     private var isFinishingCall = false
     private val identityCache = mutableMapOf<String, CachedCallIdentity>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        CallService.isActivityVisible.value = true
         turnScreenOnAndShowWhileLocked()
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
 
         CallBackgroundStore.attach(preferenceManager)
         AdPreloader.preloadPostCallAd(this@CallActivity)
@@ -103,6 +152,51 @@ class CallActivity : ComponentActivity() {
         }
 
         setupProximitySensor()
+
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val hasOngoing = CallService.allCalls.value.any {
+                    it.state == Call.STATE_ACTIVE ||
+                    it.state == Call.STATE_HOLDING ||
+                    it.state == Call.STATE_DIALING ||
+                    it.state == Call.STATE_CONNECTING
+                }
+                if (hasOngoing) {
+                    checkAndStartFloatingBubble()
+                    val km = getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+                    if (km != null && km.isKeyguardLocked && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        km.requestDismissKeyguard(this@CallActivity, object : android.app.KeyguardManager.KeyguardDismissCallback() {
+                            override fun onDismissSucceeded() {
+                                moveTaskToBack(true)
+                            }
+                            override fun onDismissCancelled() {
+                                moveTaskToBack(true)
+                            }
+                        })
+                    } else {
+                        moveTaskToBack(true)
+                    }
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+
+        lifecycleScope.launch {
+            CallService.audioState.collect { audioState ->
+                val activeCalls = CallService.allCalls.value
+                val hasActive = activeCalls.any { it.state == Call.STATE_ACTIVE || it.state == Call.STATE_DIALING }
+                if (hasActive) {
+                    val route = audioState?.route ?: CallAudioState.ROUTE_EARPIECE
+                    if (route == CallAudioState.ROUTE_EARPIECE) {
+                        acquireProximityLock()
+                    } else {
+                        releaseProximityLock()
+                    }
+                }
+            }
+        }
         applySystemBarStyle(isNightMode())
 
         setContent {
@@ -128,6 +222,7 @@ class CallActivity : ComponentActivity() {
 
                 var lastKnownIdentity by remember { mutableStateOf<CallIdentity?>(null) }
                 var lastConnectTime by remember { mutableLongStateOf(0L) }
+                var postCallShown by remember { mutableStateOf(false) }
 
                 LaunchedEffect(identity) {
                     if (identity != null) {
@@ -135,17 +230,13 @@ class CallActivity : ComponentActivity() {
                     }
                 }
 
-                LaunchedEffect(displaySession?.connectTimeMillis) {
+                LaunchedEffect(displayCall, displaySession?.connectTimeMillis) {
                     val ct = displaySession?.connectTimeMillis ?: 0L
-                    if (ct > 0) {
-                        lastConnectTime = ct
-                    }
+                    lastConnectTime = ct
                 }
 
                 val darkTheme = isSystemInDarkTheme()
-                val lightSystemBarIcons = darkTheme ||
-                        identity?.backgroundUri != null ||
-                        identity?.photoUri != null
+                val lightSystemBarIcons = darkTheme
 
                 DisposableEffect(lightSystemBarIcons) {
                     applySystemBarStyle(lightSystemBarIcons)
@@ -180,6 +271,11 @@ class CallActivity : ComponentActivity() {
                             } else {
                                 releaseProximityLock()
                             }
+                            if (preferenceManager.isAutoSpeakerProximityEnabled()) {
+                                startProximitySensorRouting()
+                            } else {
+                                stopProximitySensorRouting()
+                            }
                         }
 
                         Call.STATE_DIALING -> {
@@ -195,6 +291,7 @@ class CallActivity : ComponentActivity() {
                         }
 
                         Call.STATE_DISCONNECTED -> {
+                            stopProximitySensorRouting()
                             if (preferenceManager.getBoolean(
                                     PreferenceManager.KEY_VIBRATE_ON_HANGUP,
                                     false
@@ -208,15 +305,18 @@ class CallActivity : ComponentActivity() {
                             val isPostCallEnabled = preferenceManager.isPostCallScreenEnabled()
                             val currentId = identity ?: lastKnownIdentity
                             delay(350)
-                            if (isPostCallEnabled && currentId != null && lastConnectTime > 0) {
+                            if (isPostCallEnabled && currentId != null && lastConnectTime > 0 && !postCallShown) {
                                 val duration = (System.currentTimeMillis() - lastConnectTime) / 1000
-                                PostCallActivity.start(
-                                    context = this@CallActivity,
-                                    contactName = currentId.name,
-                                    phoneNumber = currentId.number,
-                                    photoUri = currentId.photoUri,
-                                    durationSeconds = duration
-                                )
+                                if (duration > 0) {
+                                    postCallShown = true
+                                    PostCallActivity.start(
+                                        context = this@CallActivity,
+                                        contactName = currentId.name,
+                                        phoneNumber = currentId.number,
+                                        photoUri = currentId.photoUri,
+                                        durationSeconds = duration
+                                    )
+                                }
                             }
                             dismissCallScreen()
                         }
@@ -228,17 +328,18 @@ class CallActivity : ComponentActivity() {
                         val isPostCallEnabled = preferenceManager.isPostCallScreenEnabled()
                         val currentId = lastKnownIdentity
                         delay(350)
-                        if (isPostCallEnabled && currentId != null) {
-                            val duration = if (lastConnectTime > 0) {
-                                (System.currentTimeMillis() - lastConnectTime) / 1000
-                            } else 0L
-                            PostCallActivity.start(
-                                context = this@CallActivity,
-                                contactName = currentId.name,
-                                phoneNumber = currentId.number,
-                                photoUri = currentId.photoUri,
-                                durationSeconds = duration
-                            )
+                        if (isPostCallEnabled && currentId != null && lastConnectTime > 0 && !postCallShown) {
+                            val duration = (System.currentTimeMillis() - lastConnectTime) / 1000
+                            if (duration > 0) {
+                                postCallShown = true
+                                PostCallActivity.start(
+                                    context = this@CallActivity,
+                                    contactName = currentId.name,
+                                    phoneNumber = currentId.number,
+                                    photoUri = currentId.photoUri,
+                                    durationSeconds = duration
+                                )
+                            }
                         }
                         if (CallService.allCalls.value.none { it.state != Call.STATE_DISCONNECTED }) {
                             dismissCallScreen()
@@ -307,14 +408,17 @@ class CallActivity : ComponentActivity() {
 
         var identity by remember(number, unknownLabel) {
             val base = cachedIdentity(number, settingsState)
-                ?: CallIdentity(number, number.ifEmpty { unknownLabel }, null, null)
-            mutableStateOf(
-                if (base.backgroundUri == null) {
-                    base.copy(backgroundUri = CallBackgroundStore.defaultModel(context))
+                ?: CallIdentity(number, if (number.isNotEmpty()) formatPhoneNumber(number) else unknownLabel, null, null)
+            val initialBg = if (base.backgroundUri == null) {
+                if (number.isEmpty()) {
+                    CallBackgroundStore.unknownModel(context) ?: CallBackgroundStore.defaultModel(context)
                 } else {
-                    base
+                    CallBackgroundStore.defaultModel(context)
                 }
-            )
+            } else {
+                base.backgroundUri
+            }
+            mutableStateOf(base.copy(backgroundUri = initialBg))
         }
 
         LaunchedEffect(number, settingsState) {
@@ -346,17 +450,29 @@ class CallActivity : ComponentActivity() {
             val resolvedBackground = handleBackground ?: idResult?.uri
             val resolveFailed =
                 handleResult.failed || idResult?.failed == true || contactFailed
+            val isUnknownCaller = contact == null || number.isEmpty()
+            val unknownBackground = if (isUnknownCaller) CallBackgroundStore.unknownModelAsync(context) else null
             val defaultBackground = CallBackgroundStore.defaultModelAsync(context)
+            val fallbackBackground = unknownBackground ?: defaultBackground
             val background = resolvedBackground
                 ?: identity.backgroundUri.takeIf { resolveFailed }
-                ?: defaultBackground
+                ?: fallbackBackground
+
+            val isConference = try {
+                call.details?.hasProperty(Call.Details.PROPERTY_CONFERENCE) == true
+            } catch (_: Exception) { false }
+            val conferenceLabel = context.getString(R.string.conference_call)
 
             val resolved = CallIdentity(
                 number = number,
-                name = contact?.name?.takeIf { it.isNotBlank() }
-                    ?: identity.name.takeIf { contactFailed && it.isNotBlank() }
-                    ?: number.ifEmpty { unknownLabel },
-                photoUri = contact?.photoUri ?: identity.photoUri.takeIf { contactFailed },
+                name = if (isConference) {
+                    conferenceLabel
+                } else {
+                    contact?.name?.takeIf { it.isNotBlank() }
+                        ?: identity.name.takeIf { contactFailed && it.isNotBlank() }
+                        ?: (if (number.isNotEmpty()) formatPhoneNumber(number) else unknownLabel)
+                },
+                photoUri = if (isConference) null else contact?.photoUri ?: identity.photoUri.takeIf { contactFailed },
                 backgroundUri = background
             )
             cacheIdentity(number, resolved, settingsState)
@@ -391,6 +507,9 @@ class CallActivity : ComponentActivity() {
             SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
         }
         enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.isAppearanceLightStatusBars = !lightIcons
+        insetsController.isAppearanceLightNavigationBars = !lightIcons
     }
 
     private fun setupProximitySensor() {
@@ -403,7 +522,28 @@ class CallActivity : ComponentActivity() {
         }
     }
 
+    private fun startProximitySensorRouting() {
+        if (!preferenceManager.isAutoSpeakerProximityEnabled()) return
+        if (isProximityListenerRegistered) return
+        if (proximitySensorManager == null) {
+            proximitySensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+            proximitySensor = proximitySensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+        }
+        proximitySensor?.let { sensor ->
+            proximitySensorManager?.registerListener(proximityListener, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+            isProximityListenerRegistered = true
+        }
+    }
+
+    private fun stopProximitySensorRouting() {
+        if (isProximityListenerRegistered) {
+            proximitySensorManager?.unregisterListener(proximityListener)
+            isProximityListenerRegistered = false
+        }
+    }
+
     override fun onDestroy() {
+        stopProximitySensorRouting()
         super.onDestroy()
         CallService.isActivityVisible.value = false
         releaseProximityLock()
@@ -418,6 +558,7 @@ class CallActivity : ComponentActivity() {
     }
 
     private fun dismissCallScreen() {
+        stopProximitySensorRouting()
         if (isFinishingCall) return
         isFinishingCall = true
 
@@ -434,8 +575,7 @@ class CallActivity : ComponentActivity() {
         window.clearFlags(
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
             WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         )
         finishAndRemoveTask()
     }
@@ -454,14 +594,8 @@ class CallActivity : ComponentActivity() {
         window.addFlags(
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
             WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-            WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         )
-        val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            keyguardManager?.requestDismissKeyguard(this, null)
-        }
     }
 
     override fun onStart() {
@@ -473,6 +607,28 @@ class CallActivity : ComponentActivity() {
         super.onResume()
         turnScreenOnAndShowWhileLocked()
         com.grinch.rivo4.controller.floating.FloatingCallService.stop(this)
+
+        // Automatically Resume the Previous Call:
+        // When returning to CallActivity (e.g. after attempting to add a call or returning from dialpad/reminders),
+        // if no active, dialing, or connecting call exists and a call is on hold, automatically resume the held call.
+        val calls = CallService.allCalls.value
+        val hasActiveOrConnecting = calls.any {
+            it.state == Call.STATE_ACTIVE ||
+            it.state == Call.STATE_DIALING ||
+            it.state == Call.STATE_CONNECTING ||
+            it.state == Call.STATE_RINGING
+        }
+        if (!hasActiveOrConnecting) {
+            val heldCall = calls.find { it.state == Call.STATE_HOLDING }
+            if (heldCall != null) {
+                try {
+                    heldCall.unhold()
+                    CallService.setPreferredCall(heldCall)
+                } catch (e: Exception) {
+                    android.util.Log.e("CallActivity", "Error auto-resuming held call in onResume: ${e.message}")
+                }
+            }
+        }
     }
 
     override fun onUserLeaveHint() {
@@ -484,30 +640,44 @@ class CallActivity : ComponentActivity() {
         super.onStop()
         if (proximityWakeLock?.isHeld != true) {
             CallService.isActivityVisible.value = false
-            if (!isFinishing && !isDestroyed) {
+            if (!isDestroyed) {
                 checkAndStartFloatingBubble()
             }
         }
     }
 
     private fun checkAndStartFloatingBubble() {
-        if (preferenceManager.isFloatingCallBubbleEnabled() &&
-            android.provider.Settings.canDrawOverlays(this)
-        ) {
-            val hasOngoingCall = CallService.allCalls.value.any {
-                it.state == Call.STATE_ACTIVE || it.state == Call.STATE_HOLDING || it.state == Call.STATE_DIALING
-            }
-            if (hasOngoingCall) {
-                com.grinch.rivo4.controller.floating.FloatingCallService.start(this)
-            }
+        if (!preferenceManager.isFloatingCallBubbleEnabled()) return
+
+        val hasOngoingCall = CallService.allCalls.value.any {
+            it.state == Call.STATE_ACTIVE ||
+            it.state == Call.STATE_HOLDING ||
+            it.state == Call.STATE_DIALING ||
+            it.state == Call.STATE_CONNECTING
+        }
+        if (!hasOngoingCall) return
+
+        if (android.provider.Settings.canDrawOverlays(this)) {
+            com.grinch.rivo4.controller.floating.FloatingCallService.start(this)
+        } else {
+            android.widget.Toast.makeText(
+                this,
+                getString(R.string.floating_bubble_permission_required_toast),
+                android.widget.Toast.LENGTH_LONG
+            ).show()
         }
     }
 
     private fun acquireProximityLock() {
         if (preferenceManager.getBoolean(PreferenceManager.KEY_PROXIMITY_SENSOR, true)) {
             try {
+                val route = CallService.audioState.value?.route ?: CallAudioState.ROUTE_EARPIECE
+                if (route != CallAudioState.ROUTE_EARPIECE) {
+                    releaseProximityLock()
+                    return
+                }
                 proximityWakeLock?.let {
-                    if (!it.isHeld) it.acquire(10 * 60 * 1000L) // 10 min safety timeout
+                    if (!it.isHeld) it.acquire()
                 }
             } catch (e: Exception) {
                 Log.e("CallActivity", "Failed to acquire proximity lock", e)
@@ -523,14 +693,5 @@ class CallActivity : ComponentActivity() {
         } catch (e: Exception) {
             Log.e("CallActivity", "Failed to release proximity lock", e)
         }
-    }
-
-    private val volumeSqueezeHelper by lazy { com.grinch.rivo4.controller.util.VolumeSqueezeHelper(this, preferenceManager) }
-
-    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (volumeSqueezeHelper.handleKeyEvent(event)) {
-            return true
-        }
-        return super.dispatchKeyEvent(event)
     }
 }

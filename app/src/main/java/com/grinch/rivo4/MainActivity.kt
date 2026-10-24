@@ -1,8 +1,14 @@
 package com.grinch.rivo4
 
+import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.os.Build
 import android.os.Bundle
 import android.provider.ContactsContract
+import android.provider.Settings
+import android.util.Log
+
 import android.telecom.Call
 import com.grinch.rivo4.controller.CallActivity
 import com.grinch.rivo4.controller.CallService
@@ -34,6 +40,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -49,6 +56,8 @@ import com.grinch.rivo4.controller.util.openLink
 import com.grinch.rivo4.view.components.RivoDialog
 import com.grinch.rivo4.view.screen.onboarding.MorphingOnboardingScreen
 import com.grinch.rivo4.view.screen.transitions.AppTransitions
+import com.grinch.rivo4.view.screen.transitions.LocalTransitionStyle
+import com.grinch.rivo4.view.screen.transitions.LocalTransitionTimeScale
 import com.grinch.rivo4.view.screen.transitions.getAppTransition
 import com.grinch.rivo4.view.theme.Rivo4Theme
 import com.ramcosta.composedestinations.DestinationsNavHost
@@ -58,9 +67,12 @@ import com.ramcosta.composedestinations.generated.destinations.MainScreenDestina
 import com.ramcosta.composedestinations.generated.destinations.ContactDetailsScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.DialPadScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.ContactEditScreenDestination
+import com.ramcosta.composedestinations.generated.destinations.ContactSelectionScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.ContactScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.DefaultDialerScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.RecentScreenDestination
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import com.grinch.rivo4.controller.lock.AppLockManager
 import com.grinch.rivo4.view.screen.settings.AppLockOverlay
 import org.koin.android.ext.android.inject
@@ -69,18 +81,40 @@ import org.koin.compose.koinInject
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.GlobalContext.startKoin
 
-class MainActivity : androidx.fragment.app.FragmentActivity() {
+val LocalRequestedTab = compositionLocalOf<MutableState<Int?>> { mutableStateOf(null) }
+
+open class MainActivity : androidx.fragment.app.FragmentActivity() {
     private val preferenceManager: PreferenceManager by inject()
     private val requestRoleLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { _ -> }
-    private var intentState by mutableStateOf<Intent?>(null)
+    protected var intentState by mutableStateOf<Intent?>(null)
     private var isAppLocked by mutableStateOf(false)
+    private var currentRequestedTab: MutableState<Int?>? = null
+    private var intentTrigger by mutableIntStateOf(0)
+
+    fun isContactsIntent(intent: Intent?): Boolean {
+        intent ?: return false
+        val data = intent.data
+        val action = intent.action
+        val componentName = intent.component?.className
+        return componentName?.endsWith("ContactsAliasActivity") == true ||
+                action == "com.grinch.rivo4.ACTION_VIEW_CONTACTS" ||
+                intent.hasCategory(Intent.CATEGORY_APP_CONTACTS) ||
+                intent.type == "vnd.android.cursor.dir/contact" ||
+                intent.type == "vnd.android.cursor.dir/person" ||
+                data == ContactsContract.Contacts.CONTENT_URI ||
+                data?.toString() == "content://contacts/people" ||
+                data?.toString() == "content://com.android.contacts/contacts"
+    }
+
+    open val isContactsOnlyEntry: Boolean
+        get() = isContactsIntent(intentState) || isContactsIntent(intent)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        applySystemOrientationPolicy()
         intentState = intent
         enableEdgeToEdge()
-        WindowCompat.setDecorFitsSystemWindows(window, false)
 
         if (AppLockManager.isLocked(preferenceManager)) {
             isAppLocked = true
@@ -95,13 +129,30 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         setContent {
             Rivo4Theme {
+                val context = LocalContext.current
                 val navController = rememberNavController()
+                val requestedTab = remember {
+                    mutableStateOf<Int?>(if (isContactsOnlyEntry) PreferenceManager.TAB_CONTACTS else null)
+                }
+                currentRequestedTab = requestedTab
 
                 val prefs = koinInject<PreferenceManager>()
-                val defBar = prefs.getInt(PreferenceManager.KEY_DEFAULT_BOTTOM_NAV, 0)
-                val transitionStyle = prefs.getInt(PreferenceManager.KEY_TRANSITION_STYLE, 0)
-                val onboardingShown = remember { prefs.getBoolean(PreferenceManager.KEY_ONBOARDING_SHOWN, false) }
+                val settingsState by prefs.settingsChanged.collectAsState()
+                val defBar = remember(settingsState) { prefs.getInt(PreferenceManager.KEY_DEFAULT_BOTTOM_NAV, 0) }
+                val transitionStyle = remember(settingsState) { prefs.getInt(PreferenceManager.KEY_TRANSITION_STYLE, 0) }
+                val transitionTimeScale = remember(settingsState) { prefs.getTransitionTimeScale() }
+                val predictiveBackEnabled = remember(settingsState) { prefs.isPredictiveBackEnabled() }
+                val onboardingShown = remember { prefs.getBoolean(PreferenceManager.KEY_ONBOARDING_SHOWN, true) }
                 var showOnboarding by remember { mutableStateOf(!onboardingShown) }
+                val defaultTransitions = remember(transitionStyle, predictiveBackEnabled, transitionTimeScale) {
+                    getAppTransition(transitionStyle, predictiveBackEnabled, transitionTimeScale)
+                }
+
+                CompositionLocalProvider(
+                    LocalRequestedTab provides requestedTab,
+                    LocalTransitionStyle provides transitionStyle,
+                    LocalTransitionTimeScale provides transitionTimeScale
+                ) {
 
                 val currentCallSession by CallService.currentCallSession.collectAsState()
                 val isCallOngoing = currentCallSession != null &&
@@ -110,7 +161,11 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                                 currentCallSession?.state == Call.STATE_DIALING ||
                                 currentCallSession?.state == Call.STATE_CONNECTING)
 
-                val darkTheme = isSystemInDarkTheme()
+                val darkTheme = when (prefs.getInt(PreferenceManager.KEY_THEME_MODE, PreferenceManager.THEME_MODE_SYSTEM)) {
+                    PreferenceManager.THEME_MODE_LIGHT -> false
+                    PreferenceManager.THEME_MODE_DARK -> true
+                    else -> isSystemInDarkTheme()
+                }
                 DisposableEffect(isCallOngoing, darkTheme) {
                     val insetsController = WindowCompat.getInsetsController(window, window.decorView)
                     if (isCallOngoing) {
@@ -171,7 +226,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                             DestinationsNavHost(
                                 navGraph = NavGraphs.root,
                                 navController = navController,
-                                defaultTransitions = getAppTransition(transitionStyle)
+                                defaultTransitions = defaultTransitions
                             )
 
                         var showRatePrompt by remember { mutableStateOf(false) }
@@ -204,10 +259,10 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                                     prefs.setBoolean(PreferenceManager.KEY_RATE_APP_SHOWN, true)
                                     showRatePrompt = false
                                 },
-                                title = "Enjoying Rivo Phone?",
+                                title = stringResource(R.string.main_enjoying_rivo),
                                 icon = Icons.Default.Star,
                                 confirmAction = com.grinch.rivo4.view.components.RivoDialogAction(
-                                    label = "Rate on Google Play",
+                                    label = stringResource(R.string.main_rate_google_play),
                                     onClick = {
                                         openLink(context, PLAY_STORE_URL)
                                         prefs.setBoolean(PreferenceManager.KEY_RATE_APP_SHOWN, true)
@@ -215,7 +270,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                                     }
                                 ),
                                 dismissAction = com.grinch.rivo4.view.components.RivoDialogAction(
-                                    label = "Remind Me Later",
+                                    label = stringResource(R.string.main_remind_later),
                                     onClick = {
                                         val threeDaysLater = System.currentTimeMillis() + (3 * 24 * 60 * 60 * 1000L)
                                         prefs.setString(PreferenceManager.KEY_RATE_APP_SNOOZED_TIME, threeDaysLater.toString())
@@ -224,7 +279,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                                 )
                             ) {
                                 Text(
-                                    text = "If Rivo has made managing your calls better, please consider leaving a 5-star rating on Google Play. Your support helps us keep the app free and independent!",
+                                    text = stringResource(R.string.main_rate_google_play_body),
                                     style = MaterialTheme.typography.bodyLarge,
                                     textAlign = TextAlign.Center,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -235,13 +290,17 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 }
 
                     LaunchedEffect(Unit) {
-                        if (!isAlreadyDefaultDialer(this@MainActivity)) {
+                        val isContacts = isContactsOnlyEntry ||
+                                intentState?.component?.className?.endsWith("ContactsAliasActivity") == true ||
+                                intentState?.action == "com.grinch.rivo4.ACTION_VIEW_CONTACTS" ||
+                                intentState?.hasCategory(Intent.CATEGORY_APP_CONTACTS) == true
+                        if (!isContacts && !isAlreadyDefaultDialer(this@MainActivity)) {
                             navController.navigate(DefaultDialerScreenDestination.route) {
                                 popUpTo(MainScreenDestination.route) {
                                     inclusive = true
                                 }
                             }
-                        } else if (intentState?.action == null || intentState?.action == Intent.ACTION_MAIN) {
+                        } else if (!isContacts && (intentState?.action == null || intentState?.action == Intent.ACTION_MAIN)) {
                             val startLocation = prefs.getInt(PreferenceManager.KEY_START_LOCATION, PreferenceManager.START_LOCATION_NORMAL)
                             if (startLocation == PreferenceManager.START_LOCATION_DIALPAD_RECENTS || startLocation == PreferenceManager.START_LOCATION_DIALPAD_CONTACTS) {
                                 navController.navigate(DialPadScreenDestination().route)
@@ -249,11 +308,30 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                         }
                     }
 
-                    LaunchedEffect(intentState) {
-                        handleIntent(intentState, navController)
+                    LaunchedEffect(intentState, intentTrigger) {
+                        handleIntent(intentState, navController, requestedTab)
                     }
                 }
+                }
             }
+        }
+    }
+
+    private fun applySystemOrientationPolicy() {
+        val rotationEnabled = try {
+            Settings.System.getInt(
+                contentResolver,
+                Settings.System.ACCELEROMETER_ROTATION,
+                1
+            ) != 0
+        } catch (_: SecurityException) {
+            true
+        }
+
+        requestedOrientation = if (rotationEnabled) {
+            ActivityInfo.SCREEN_ORIENTATION_USER
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_LOCKED
         }
     }
 
@@ -274,47 +352,140 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         intentState = intent
+        intentTrigger++
+        if (isContactsIntent(intent)) {
+            currentRequestedTab?.value = PreferenceManager.TAB_CONTACTS
+        }
     }
 
-    private fun handleIntent(intent: Intent?, navController: androidx.navigation.NavController) {
+    private fun handleIntent(intent: Intent?, navController: androidx.navigation.NavController, requestedTab: MutableState<Int?>? = null) {
         intent ?: return
+        if ((intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) {
+            return
+        }
         val data = intent.data
         val action = intent.action
+        val componentName = intent.component?.className
 
-        when (action) {
-            "com.grinch.rivo4.ACTION_VIEW_RECENTS" -> {
-                navController.navigate(MainScreenDestination(initialTab = 0).route) {
-                    popUpTo(navController.graph.startDestinationId)
-                    launchSingleTop = true
+        val isContactsAction = isContactsIntent(intent)
+
+        if (isContactsAction) {
+            requestedTab?.value = PreferenceManager.TAB_CONTACTS
+            if (navController.currentDestination?.route != MainScreenDestination.route) {
+                try {
+                    navController.popBackStack(MainScreenDestination.route, inclusive = false)
+                } catch (e: Exception) {
+                    try {
+                        navController.navigate(MainScreenDestination(initialTab = PreferenceManager.TAB_CONTACTS).route) {
+                            popUpTo(navController.graph.startDestinationId) {
+                                inclusive = false
+                            }
+                            launchSingleTop = true
+                        }
+                    } catch (e2: Exception) {
+                        Log.e("MainActivity", "Error navigating to main screen: ${e2.message}", e2)
+                    }
                 }
             }
+            return
+        }
+
+        val isMissedCallOrRecents = action == "com.grinch.rivo4.ACTION_VIEW_RECENTS" ||
+                action == "android.telecom.action.SHOW_MISSED_CALLS_NOTIFICATION" ||
+                (action == Intent.ACTION_VIEW && (
+                    intent.type == android.provider.CallLog.Calls.CONTENT_TYPE ||
+                    data?.authority == "call_log" ||
+                    data?.toString()?.contains("call_log") == true ||
+                    data?.toString()?.contains("calls") == true
+                ))
+
+        if (isMissedCallOrRecents) {
+            try {
+                val telecomManager = getSystemService(Context.TELECOM_SERVICE) as? android.telecom.TelecomManager
+                telecomManager?.cancelMissedCallsNotification()
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error canceling missed calls: ${e.message}", e)
+            }
+            navController.navigate(MainScreenDestination(initialTab = 0).route) {
+                popUpTo(navController.graph.startDestinationId)
+                launchSingleTop = true
+            }
+            return
+        }
+
+        when (action) {
             Intent.ACTION_DIAL, Intent.ACTION_VIEW, Intent.ACTION_CALL -> {
                 if (data?.scheme == "tel") {
                     val rawNumber = data.schemeSpecificPart
                     val number = android.net.Uri.decode(rawNumber) ?: rawNumber
                     val cleanNumber = number.replace(" ", "")
                     val isSecretOrImei = cleanNumber == "*#06#" || cleanNumber.startsWith("*#*#") || cleanNumber.startsWith("##") || (cleanNumber.startsWith("*#") && cleanNumber.endsWith("#"))
+                    val contactIdExtra = intent.getStringExtra("contact_id")
                     if (action == Intent.ACTION_CALL && isAlreadyDefaultDialer(this) && !isSecretOrImei) {
-                        makeCall(this, number)
+                        makeCall(this, number, contactId = contactIdExtra)
                     } else {
                         navController.navigate(DialPadScreenDestination(initialNumber = number).route)
                     }
-                } else if (data?.toString()?.contains("contacts") == true || data?.toString()?.contains("com.android.contacts") == true || intent.hasExtra("contact_id")) {
+                } else if ((data?.toString()?.contains("contacts") == true || data?.toString()?.contains("com.android.contacts") == true || intent.hasExtra("contact_id"))
+                    && data?.toString() != "content://contacts/people"
+                    && data?.toString() != "content://com.android.contacts/contacts"
+                    && data != ContactsContract.Contacts.CONTENT_URI
+                    && intent.type != "vnd.android.cursor.dir/contact"
+                    && intent.type != "vnd.android.cursor.dir/person"
+                ) {
                     val id = data?.lastPathSegment ?: intent.getStringExtra("contact_id")
-                    if (id != null) {
+                    if (id != null && id != "contacts" && id != "people") {
                         navController.navigate(ContactDetailsScreenDestination(contactId = id).route)
+                    } else {
+                        requestedTab?.value = PreferenceManager.TAB_CONTACTS
+                        if (navController.currentDestination?.route != MainScreenDestination.route) {
+                            try {
+                                navController.popBackStack(MainScreenDestination.route, inclusive = false)
+                            } catch (e: Exception) {
+                                navController.navigate(MainScreenDestination(initialTab = PreferenceManager.TAB_CONTACTS).route) {
+                                    popUpTo(navController.graph.startDestinationId) {
+                                        inclusive = false
+                                    }
+                                    launchSingleTop = true
+                                }
+                            }
+                        }
                     }
+                } else if (action == Intent.ACTION_DIAL) {
+                    navController.navigate(DialPadScreenDestination().route)
                 }
             }
             Intent.ACTION_INSERT -> {
                 val name = intent.getStringExtra(ContactsContract.Intents.Insert.NAME)
                 val phone = intent.getStringExtra(ContactsContract.Intents.Insert.PHONE)
                 navController.navigate(ContactEditScreenDestination(initialName = name, initialPhone = phone).route)
+                intent.action = null
+                intentState = null
+            }
+            "com.grinch.rivo4.ACTION_ADD_TO_EXISTING_CONTACT" -> {
+                val phone = intent.getStringExtra(ContactsContract.Intents.Insert.PHONE)
+                navController.navigate(
+                    ContactSelectionScreenDestination(
+                        title = getString(R.string.action_add_existing_contact),
+                        initialPhoneToAssign = phone
+                    ).route
+                )
+                intent.action = null
+                intentState = null
+            }
+            Intent.ACTION_INSERT_OR_EDIT -> {
+                val name = intent.getStringExtra(ContactsContract.Intents.Insert.NAME)
+                val phone = intent.getStringExtra(ContactsContract.Intents.Insert.PHONE)
+                navController.navigate(ContactEditScreenDestination(initialName = name, initialPhone = phone).route)
+                intent.action = null
+                intentState = null
             }
             Intent.ACTION_EDIT -> {
                 val id = data?.lastPathSegment
                 if (id != null) {
                     navController.navigate(ContactEditScreenDestination(contactId = id).route)
+                    intent.action = null
+                    intentState = null
                 }
             }
         }
@@ -329,3 +500,6 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         return super.dispatchKeyEvent(event)
     }
 }
+
+
+// TODO: Convert to M3 DynamicColor - use MaterialTheme.dynamicColorScheme

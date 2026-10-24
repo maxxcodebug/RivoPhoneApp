@@ -3,6 +3,7 @@ package com.grinch.rivo4.controller
 import android.provider.CallLog
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.grinch.rivo4.controller.util.PreferenceManager
 import com.grinch.rivo4.modal.`interface`.ICallLogRepository
 import com.grinch.rivo4.modal.data.CallLogEntry
 import kotlinx.coroutines.Dispatchers
@@ -44,8 +45,12 @@ data class CallAnalyticsSummary(
 )
 
 class CallAnalyticsViewModel(
-    private val callLogRepo: ICallLogRepository
+    private val callLogRepo: ICallLogRepository,
+    private val prefs: PreferenceManager
 ) : ViewModel() {
+
+    private val _isTrackingEnabled = MutableStateFlow(prefs.isCallAnalyticsTrackingEnabled())
+    val isTrackingEnabled: StateFlow<Boolean> = _isTrackingEnabled.asStateFlow()
 
     private val _selectedRange = MutableStateFlow(AnalyticsTimeRange.TODAY)
     val selectedRange: StateFlow<AnalyticsTimeRange> = _selectedRange.asStateFlow()
@@ -56,10 +61,38 @@ class CallAnalyticsViewModel(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    @Volatile
     private var cachedCallLogs: List<CallLogEntry>? = null
 
     init {
-        loadAnalytics(forceRefresh = true)
+        viewModelScope.launch {
+            prefs.settingsChanged.collect {
+                val enabled = prefs.isCallAnalyticsTrackingEnabled()
+                if (_isTrackingEnabled.value != enabled) {
+                    _isTrackingEnabled.value = enabled
+                    if (enabled) {
+                        loadAnalytics(forceRefresh = true)
+                    } else {
+                        cachedCallLogs = null
+                        _analytics.value = CallAnalyticsSummary()
+                    }
+                }
+            }
+        }
+        if (_isTrackingEnabled.value) {
+            loadAnalytics(forceRefresh = true)
+        }
+    }
+
+    fun setAnalyticsTrackingEnabled(enabled: Boolean) {
+        prefs.setCallAnalyticsTrackingEnabled(enabled)
+        _isTrackingEnabled.value = enabled
+        if (enabled) {
+            loadAnalytics(forceRefresh = true)
+        } else {
+            cachedCallLogs = null
+            _analytics.value = CallAnalyticsSummary()
+        }
     }
 
     fun setTimeRange(range: AnalyticsTimeRange) {
@@ -70,6 +103,11 @@ class CallAnalyticsViewModel(
     }
 
     fun loadAnalytics(forceRefresh: Boolean = false) {
+        if (!prefs.isCallAnalyticsTrackingEnabled()) {
+            _analytics.value = CallAnalyticsSummary()
+            _isLoading.value = false
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             _isLoading.value = true
             if (forceRefresh || cachedCallLogs == null) {
@@ -81,6 +119,10 @@ class CallAnalyticsViewModel(
     }
 
     private fun computeAnalytics() {
+        if (!prefs.isCallAnalyticsTrackingEnabled()) {
+            _analytics.value = CallAnalyticsSummary()
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             if (cachedCallLogs == null) {
                 _isLoading.value = true
@@ -92,9 +134,28 @@ class CallAnalyticsViewModel(
     }
 
     private fun computeAnalyticsInternal() {
+        if (!prefs.isCallAnalyticsTrackingEnabled()) {
+            _analytics.value = CallAnalyticsSummary()
+            return
+        }
         val logs = cachedCallLogs ?: emptyList()
         val cutoff = calculateCutoffTime(_selectedRange.value)
-        val filtered = if (cutoff > 0L) logs.filter { it.date >= cutoff } else logs
+        val flattenedLogs = logs.flatMap { parent ->
+            if (parent.subLogs.isNotEmpty()) {
+                parent.subLogs.map { sub ->
+                    sub.copy(
+                        name = sub.name ?: parent.name,
+                        photoUri = sub.photoUri ?: parent.photoUri,
+                        contactId = sub.contactId ?: parent.contactId,
+                        simNumber = sub.simNumber ?: parent.simNumber,
+                        simLabel = sub.simLabel ?: parent.simLabel
+                    )
+                }
+            } else {
+                listOf(parent)
+            }
+        }
+        val filtered = if (cutoff > 0L) flattenedLogs.filter { it.date >= cutoff } else flattenedLogs
 
         var totalTalkTime = 0L
         var totalCalls = 0
@@ -131,7 +192,7 @@ class CallAnalyticsViewModel(
             hourly[hour] = (hourly[hour] ?: 0) + callCount
 
             // SIM usage
-            val sim = entry.simLabel ?: "Primary SIM"
+            val sim = entry.simNumber?.let { "SIM $it" } ?: entry.simLabel ?: "Primary SIM"
             simMap[sim] = (simMap[sim] ?: 0L) + entry.duration
 
             // Contact aggregation
@@ -170,7 +231,8 @@ class CallAnalyticsViewModel(
                 )
             }
 
-        val avgDuration = if (totalCalls > 0) totalTalkTime / totalCalls else 0L
+        val connectedCalls = incoming + outgoing
+        val avgDuration = if (connectedCalls > 0) totalTalkTime / connectedCalls else 0L
 
         _analytics.value = CallAnalyticsSummary(
             totalTalkTimeSeconds = totalTalkTime,

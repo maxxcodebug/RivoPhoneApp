@@ -10,6 +10,8 @@ import com.grinch.rivo4.modal.`interface`.IContactsRepository
 import com.grinch.rivo4.modal.repository.CallLogRepository
 import com.grinch.rivo4.modal.repository.ContactsRepository
 import com.grinch.rivo4.controller.CallAnalyticsViewModel
+import com.grinch.rivo4.controller.ads.RewardedAdManager
+import com.grinch.rivo4.controller.billing.BillingManager
 import com.grinch.rivo4.controller.util.PreferenceManager
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
@@ -28,9 +30,10 @@ val appModule = module {
     single { get<RivoDatabase>().privateContactDao() }
     single { get<RivoDatabase>().callNoteDao() }
     single { get<RivoDatabase>().callbackReminderDao() }
+    single { get<RivoDatabase>().trashedContactDao() }
 
     single<IContactsRepository> {
-        ContactsRepository(androidContext(), get())
+        ContactsRepository(androidContext(), get(), get())
     }
     single<ICallLogRepository> {
         CallLogRepository(androidContext().contentResolver, androidContext(), get())
@@ -44,8 +47,11 @@ val appModule = module {
     single {
         com.grinch.rivo4.controller.billing.BillingManager(androidContext(), get())
     }
-    viewModel { ContactsViewModel(get(), get()) }
+    single {
+        RewardedAdManager(androidContext())
+    }
+    viewModel { ContactsViewModel(get(), get(), get(), androidContext()) }
     viewModel { CallLogViewModel(get(), androidContext().contentResolver) }
-    viewModel { BackupViewModel(get(), get()) }
-    viewModel { CallAnalyticsViewModel(get()) }
+    viewModel { BackupViewModel(get(), get(), get()) }
+    viewModel { CallAnalyticsViewModel(get(), get()) }
 }

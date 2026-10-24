@@ -13,6 +13,8 @@ import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import android.telephony.PhoneNumberUtils
 import android.telephony.TelephonyManager
+import android.util.Log
+
 import android.text.format.DateUtils
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
@@ -22,13 +24,24 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-private fun isYesterday(timestamp: Long): Boolean {
+private val formattedNumberCache = android.util.LruCache<String, String>(500)
+private val sameYearFormat = ThreadLocal.withInitial {
+    SimpleDateFormat("MMMM d", Locale.getDefault())
+}
+private val diffYearFormat = ThreadLocal.withInitial {
+    SimpleDateFormat("MMMM d, yyyy", Locale.getDefault())
+}
+private val timeFormatCache = ThreadLocal<Pair<Boolean, java.text.DateFormat>>()
+private val calThreadLocal1 = ThreadLocal.withInitial { Calendar.getInstance() }
+private val calThreadLocal2 = ThreadLocal.withInitial { Calendar.getInstance() }
+
+fun isYesterday(timestamp: Long): Boolean {
     return DateUtils.isToday(timestamp + DateUtils.DAY_IN_MILLIS)
 }
 
 private fun isSameYear(timestamp1: Long, timestamp2: Long): Boolean {
-    val cal1 = Calendar.getInstance().apply { timeInMillis = timestamp1 }
-    val cal2 = Calendar.getInstance().apply { timeInMillis = timestamp2 }
+    val cal1 = (calThreadLocal1.get() ?: Calendar.getInstance()).apply { timeInMillis = timestamp1 }
+    val cal2 = (calThreadLocal2.get() ?: Calendar.getInstance()).apply { timeInMillis = timestamp2 }
     return cal1.get(Calendar.YEAR) == cal2.get(Calendar.YEAR)
 }
 
@@ -44,28 +57,104 @@ fun formatDateHeader(context: Context, timestamp: Long): String {
     val relative = getRelativeDay(context, timestamp)
     if (relative != null) return relative
 
-    val pattern = if (isSameYear(timestamp, System.currentTimeMillis())) "MMMM d" else "MMMM d, yyyy"
-    return SimpleDateFormat(pattern, Locale.getDefault()).format(Date(timestamp))
+    val isCurrentYear = isSameYear(timestamp, System.currentTimeMillis())
+    val formatter = (if (isCurrentYear) sameYearFormat.get() else diffYearFormat.get())
+        ?: SimpleDateFormat(if (isCurrentYear) "MMMM d" else "MMMM d, yyyy", Locale.getDefault())
+    return formatter.format(Date(timestamp))
+}
+
+fun formatTime(context: Context, timestamp: Long): String {
+    val is24 = android.text.format.DateFormat.is24HourFormat(context)
+    var cached = timeFormatCache.get()
+    if (cached == null || cached.first != is24) {
+        cached = Pair(is24, android.text.format.DateFormat.getTimeFormat(context))
+        timeFormatCache.set(cached)
+    }
+    return cached.second.format(Date(timestamp))
 }
 
 fun formatDate(context: Context, timestamp: Long): String {
     val relative = getRelativeDay(context, timestamp)
-    val time = android.text.format.DateFormat.getTimeFormat(context).format(Date(timestamp))
-
+    val time = formatTime(context, timestamp)
     return if (relative != null) "$relative, $time" else "${formatDateHeader(context, timestamp)}, $time"
-}
-
-fun formatTime(context: Context, timestamp: Long): String {
-    val time = android.text.format.DateFormat.getTimeFormat(context).format(Date(timestamp))
-    return "$time"
 }
 
 fun formatDuration(durationSeconds: Long): String {
     return DateUtils.formatElapsedTime(durationSeconds)
 }
 
-fun formatPhoneNumber(number: String): String {
-    return PhoneNumberUtils.formatNumber(number, Locale.getDefault().country) ?: number
+fun formatRelativeCallDateTime(context: Context, timestamp: Long): String {
+    val time = formatTime(context, timestamp)
+    val now = System.currentTimeMillis()
+    val calNow = Calendar.getInstance().apply { timeInMillis = now }
+    val calTarget = Calendar.getInstance().apply { timeInMillis = timestamp }
+
+    return when {
+        DateUtils.isToday(timestamp) -> "${context.getString(R.string.date_today)}, $time"
+        isYesterday(timestamp) -> "${context.getString(R.string.date_yesterday)}, $time"
+        calNow.get(Calendar.YEAR) == calTarget.get(Calendar.YEAR) &&
+                calNow.get(Calendar.WEEK_OF_YEAR) == calTarget.get(Calendar.WEEK_OF_YEAR) -> {
+            val dayName = SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(timestamp))
+            "$dayName, $time"
+        }
+        now - timestamp in 0..(7 * DateUtils.DAY_IN_MILLIS) -> {
+            val dayName = SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(timestamp))
+            "Last $dayName, $time"
+        }
+        calNow.get(Calendar.YEAR) == calTarget.get(Calendar.YEAR) -> {
+            SimpleDateFormat("MMM d, ", Locale.getDefault()).format(Date(timestamp)) + time
+        }
+        else -> {
+            SimpleDateFormat("MMM d, yyyy, ", Locale.getDefault()).format(Date(timestamp)) + time
+        }
+    }
+}
+
+fun clearFormattedNumberCache() {
+    formattedNumberCache.evictAll()
+}
+
+fun formatPhoneNumber(number: String, showCountryCode: Boolean? = null): String {
+    if (number.isBlank()) return number
+
+    val shouldShowCountryCode = showCountryCode ?: runCatching {
+        org.koin.java.KoinJavaComponent.getKoin().get<PreferenceManager>().isShowCountryCodeEnabled()
+    }.getOrDefault(true)
+
+    val cacheKey = "${shouldShowCountryCode}_$number"
+    return formattedNumberCache.get(cacheKey) ?: run {
+        val defaultCountry = Locale.getDefault().country.ifEmpty { "US" }
+        val digitsOnly = number.filter { it.isDigit() }
+        val e164 = if (shouldShowCountryCode && !number.startsWith("+") && digitsOnly.length in 7..15 && !number.contains("*") && !number.contains("#")) {
+            PhoneNumberUtils.formatNumberToE164(number, defaultCountry)
+        } else {
+            null
+        }
+        val numberToFormat = e164 ?: number
+        val formattedStandard = PhoneNumberUtils.formatNumber(numberToFormat, defaultCountry) ?: numberToFormat
+        
+        val result = if (shouldShowCountryCode) {
+            formattedStandard
+        } else {
+            // Strip leading "+" and country calling code if present
+            var stripped = formattedStandard.trim()
+            if (stripped.startsWith("+")) {
+                // Remove the plus and the country dialing code (1 to 4 digits followed by space/separator)
+                // Examples: +1 (555) 123-4567 -> (555) 123-4567
+                // +44 20 7946 0958 -> 020 7946 0958 or 20 7946 0958
+                // +91 98765 43210 -> 98765 43210
+                stripped = stripped.replace(Regex("^\\+\\d{1,4}[\\s\\-]"), "")
+                if (stripped.startsWith("+")) {
+                    stripped = stripped.replace(Regex("^\\+\\d{1,4}"), "")
+                }
+            } else if (stripped.startsWith("00")) {
+                stripped = stripped.replace(Regex("^00\\d{1,4}[\\s\\-]"), "")
+            }
+            stripped.ifBlank { formattedStandard }
+        }
+        formattedNumberCache.put(cacheKey, result)
+        result
+    }
 }
 
 fun normalizePhoneNumber(number: String): String {
@@ -73,8 +162,33 @@ fun normalizePhoneNumber(number: String): String {
 }
 
 fun areNumbersEqual(num1: String?, num2: String?): Boolean {
-    if (num1 == null || num2 == null) return false
-    return PhoneNumberUtils.compare(num1, num2)
+    if (num1.isNullOrBlank() || num2.isNullOrBlank()) return false
+    val trim1 = num1.trim()
+    val trim2 = num2.trim()
+    if (trim1.equals(trim2, ignoreCase = true)) return true
+
+    // If either number is a USSD/MMI code containing '*' or '#', require exact dialable match
+    if (trim1.contains('*') || trim1.contains('#') || trim2.contains('*') || trim2.contains('#')) {
+        val dial1 = trim1.filter { it.isDigit() || it == '*' || it == '#' || it == '+' }
+        val dial2 = trim2.filter { it.isDigit() || it == '*' || it == '#' || it == '+' }
+        return dial1.isNotEmpty() && dial1 == dial2
+    }
+
+    val digits1 = trim1.filter { it.isDigit() }
+    val digits2 = trim2.filter { it.isDigit() }
+    if (digits1.isEmpty() || digits2.isEmpty()) return false
+    if (digits1 == digits2) return true
+    if (digits1.length < 3 || digits2.length < 3) return false
+    val compared = try {
+        PhoneNumberUtils.compare(trim1, trim2)
+    } catch (_: Exception) {
+        false
+    }
+    if (compared) return true
+    // Fallback: match by last 7 digits if both numbers are sufficiently long
+    return if (digits1.length >= 7 && digits2.length >= 7) {
+        digits1.takeLast(7) == digits2.takeLast(7)
+    } else false
 }
 
 fun deduplicateNumbers(numbers: List<String>): List<String> {
@@ -188,9 +302,8 @@ fun makeCall(context: Context, number: String, accountHandle: PhoneAccountHandle
         } else emptyList()
 
         val favSim = contactId?.let { prefs.getFavoriteSim(it) }
-        val favNum = contactId?.let { prefs.getFavoriteNumber(it) }
         
-        preferredHandle = if (favSim != null && areNumbersEqual(number, favNum)) {
+        preferredHandle = if (favSim != null) {
             accounts.find { it.id == favSim }
         } else null
 
@@ -266,7 +379,7 @@ fun openLink(context: Context, link: String) {
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
         context.startActivity(intent)
     } catch (e: Exception) {
-        e.printStackTrace()
+        Log.e("Utils", "Error: ${e.message}", e)
     }
 }
 
@@ -287,7 +400,7 @@ fun getAppVersion(context: Context): Pair<String, Long> {
 
         Pair(versionName, versionCode)
     } catch (e: PackageManager.NameNotFoundException) {
-        e.printStackTrace()
+        Log.e("Utils", "Error: ${e.message}", e)
         Pair(context.getString(R.string.label_unknown), -1L)
     }
 }
@@ -348,9 +461,9 @@ fun getDeviceImeiInfo(context: Context): DeviceImeiInfo {
                 } else null
             } catch (e: Exception) { null }
         } catch (e: SecurityException) {
-            e.printStackTrace()
+            Log.e("Utils", "Error: ${e.message}", e)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("Utils", "Error: ${e.message}", e)
         }
     }
     return DeviceImeiInfo(imei1 = imei1, imei2 = imei2, meid = meid, serial = serial)
@@ -379,7 +492,7 @@ fun processSecretCode(context: Context, fullCode: String): Boolean {
             handled = true
         }
     } catch (e: Exception) {
-        e.printStackTrace()
+        Log.e("Utils", "Error: ${e.message}", e)
     }
 
     try {
@@ -394,7 +507,7 @@ fun processSecretCode(context: Context, fullCode: String): Boolean {
         context.sendBroadcast(intent1)
         handled = true
     } catch (e: Exception) {
-        e.printStackTrace()
+        Log.e("Utils", "Error: ${e.message}", e)
     }
 
     try {
@@ -404,7 +517,7 @@ fun processSecretCode(context: Context, fullCode: String): Boolean {
         context.sendBroadcast(intent2)
         handled = true
     } catch (e: Exception) {
-        e.printStackTrace()
+        Log.e("Utils", "Error: ${e.message}", e)
     }
 
     when (code) {

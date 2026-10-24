@@ -1,4 +1,5 @@
 package com.grinch.rivo4.view.screen.settings
+import com.grinch.rivo4.view.components.MenuTopAppBar
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -51,13 +52,9 @@ fun SpeedDialScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.settings_speed_dial_title), fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = { navigator.navigateUp() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                    }
-                }
+            MenuTopAppBar(
+                text = stringResource(R.string.settings_speed_dial_title),
+                navigator = navigator
             )
         },
         containerColor = MaterialTheme.colorScheme.surface
@@ -67,43 +64,50 @@ fun SpeedDialScreen(
                 .fillMaxSize()
                 .padding(padding),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             item {
-                RivoExpressiveCard {
-                    RivoSwitchListItem(
-                        headline = stringResource(R.string.settings_speed_dial_enable),
-                        supporting = stringResource(R.string.settings_speed_dial_enable_supporting),
-                        leadingIcon = Icons.Outlined.Speed,
-                        checked = speedDialEnabled,
-                        onCheckedChange = {
-                            speedDialEnabled = it
-                            prefs.setBoolean(PreferenceManager.KEY_SPEED_DIAL, it)
-                        }
-                    )
+                RivoExpressiveGroup {
+                    item {
+                        RivoSwitchListItem(
+                            headline = stringResource(R.string.settings_speed_dial_enable),
+                            supporting = stringResource(R.string.settings_speed_dial_enable_supporting),
+                            leadingIcon = Icons.Outlined.Speed,
+                            checked = speedDialEnabled,
+                            onCheckedChange = {
+                                speedDialEnabled = it
+                                prefs.setBoolean(PreferenceManager.KEY_SPEED_DIAL, it)
+                            }
+                        )
+                    }
                 }
             }
 
             item {
-                RivoSectionHeader(title = stringResource(R.string.settings_speed_dial_assignments_header))
+                RivoSectionHeader(
+                    title = stringResource(R.string.settings_speed_dial_assignments_header),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+                )
             }
 
             items(8) { index ->
                 val key = index + 2
                 val mapping = prefs.getString("speed_dial_$key", null)
-                val parts = mapping?.split("|")
-                val name = parts?.getOrNull(0)
-                val number = parts?.getOrNull(1)
+                val name = mapping?.substringBeforeLast("|")?.takeIf { it.isNotBlank() }
+                val number = mapping?.substringAfterLast("|", "")?.takeIf { it.isNotBlank() }
 
-                RivoExpressiveCard {
+                RivoGroupedCardContainer(
+                    shape = rivoGroupedItemShape(index, 8)
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp),
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
-                            modifier = Modifier.size(48.dp),
+                            modifier = Modifier.size(44.dp),
                             shape = RoundedCornerShape(12.dp),
                             color = MaterialTheme.colorScheme.primaryContainer,
                             contentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -144,14 +148,13 @@ fun SpeedDialScreen(
                         }
                         
                         IconButton(onClick = { showContactPicker = key }) {
-                            Icon(if (mapping == null) Icons.Default.Add else Icons.Default.Add, contentDescription = stringResource(R.string.content_desc_assign))
+                            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.content_desc_assign))
                         }
                     }
                 }
             }
 
             item {
-                com.grinch.rivo4.view.components.ad.BannerAd()
             }
         }
     }
@@ -213,7 +216,7 @@ fun ContactPickerDialog(
             Column(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                filteredContacts.take(30).forEach { contact ->
+                filteredContacts.take(100).forEach { contact ->
                     RivoListItem(
                         headline = contact.name,
                         supporting = contact.phoneNumbers.firstOrNull() ?: stringResource(R.string.settings_speed_dial_no_number),

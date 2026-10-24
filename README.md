@@ -1,98 +1,116 @@
-
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/app/src/main/res/drawable/logo.png" width="120" height="120" alt="Rivo Logo">
+<img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/app/src/main/res/drawable/logo.png" width="96" height="96" alt="Rivo Logo">
 
 # Rivo
 
-**An open-source, modern Android dialer built with Jetpack Compose.**
+A clean, open-source dialer and contacts app for Android, built with Jetpack Compose.
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0)
-[![Platform](https://img.shields.io/badge/Platform-Android-3DDC84.svg?style=flat-square&logo=android)](https://www.android.com)
-[![Jetpack Compose](https://img.shields.io/badge/Built_with-Jetpack_Compose-4285F4.svg?style=flat-square&logo=android)](https://developer.android.com/jetpack/compose)
-[![Translate on Crowdin](https://img.shields.io/badge/Translate-on%20Crowdin-1A56D0?logo=crowdin&style=flat-square)](https://crowdin.com/project/rivophone)
+[![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-2563EB.svg?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0)
+[![Platform](https://img.shields.io/badge/Platform-Android-10B981.svg?style=flat-square&logo=android)](https://www.android.com)
+[![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack%20Compose-6366F1.svg?style=flat-square)](https://developer.android.com/jetpack/compose)
+[![Crowdin](https://img.shields.io/badge/Localization-Crowdin-0EA5E9?logo=crowdin&style=flat-square)](https://crowdin.com/project/rivophone)
 
-The goal is simple: provide a clean, modern phone app without unnecessary clutter while keeping the core calling experience fast, reliable, and packed with modern utility.
-
-<br>
-
-### 📥 Download & Install
-
-<a href="https://play.google.com/store/apps/details?id=com.grinch.rivo4">
-  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/play.png" alt="Download from Google Play" height="45">
-</a>
-<a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/{%22id%22:%22com.grinch.rivo4%22,%22url%22:%22https://github.com/user-grinch/RivoPhoneApp%22,%22author%22:%22user-grinch%22,%22name%22:%22RivoPhoneApp%22}">
-  <img src="https://raw.githubusercontent.com/ImranR98/Obtainium/b1c8ac6f2ab08497189721a788a5763e28ff64cd/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="45">
-</a>
-<a href="https://github.com/user-grinch/RivoPhoneApp/releases">
-  <img src="https://user-images.githubusercontent.com/69304392/148696068-0cfea65d-b18f-4685-82b5-329a330b1c0d.png" alt="Download from GitHub Releases" height="45">
-</a>
-
-<br>
-
-### 💬 Community & Support
-
-<a href="https://www.patreon.com/c/grinch_">
-  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/patreon.png" height="45" alt="Support us on Patreon">
-</a>
-&nbsp;&nbsp;
-<a href="https://discord.gg/NtEvU3726e">
-  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/discord.png" height="45" alt="Join us on Discord">
-</a>
+<p align="center">
+  <a href="https://play.google.com/store/apps/details?id=com.grinch.rivo4">
+    <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/play.png" alt="Get it on Google Play" height="42">
+  </a>
+  &nbsp;
+  <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/{%22id%22:%22com.grinch.rivo4%22,%22url%22:%22https://github.com/user-grinch/RivoPhoneApp%22,%22author%22:%22user-grinch%22,%22name%22:%22RivoPhoneApp%22}">
+    <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/obtainium.png" alt="Get it on Obtainium" height="42">
+  </a>
+  &nbsp;
+  <a href="https://github.com/user-grinch/RivoPhoneApp/releases">
+    <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/github.png" alt="Download APK from GitHub" height="42">
+  </a>
+  &nbsp;
+  <a href="https://www.patreon.com/c/grinch_">
+    <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/patreon.png" alt="Donate on Patreon" height="42">
+  </a>
+  &nbsp;
+  <a href="#Donation">
+    <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/tipjar.png" alt="In-App Tip Jar" height="42">
+  </a>
+  &nbsp;
+  <a href="https://discord.gg/NtEvU3726e">
+    <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/discord.png" alt="Join us on Discord" height="42">
+  </a>
+  <br>
+</p>
 
 </div>
 
 ---
 
-## ✨ Highlights
+## Features
 
-- 🎙️ **Call Recording via Shizuku:** Seamless, elevated call recording support powered by [Shizuku](https://shizuku.rikka.app/)—no root required, bypassing modern Android accessibility restrictions.
-- 🎭 **Fake Incoming Call:** Schedule or instantly trigger simulated incoming calls with custom caller ID, ringtone, and delay to escape awkward situations.
-- 🎨 **Material 3 Expressive:** A clean, fluid interface with Dynamic Color (Material You) theming that matches your system palette.
-- 🔒 **Private Contacts & Vault:** Lock sensitive contacts and keep their history out of regular view for total privacy.
-- ⚡ **Lightning Fast:** Optimized keypad response, instantaneous contact lookup, and silky 120Hz scrolling.
-- 🔍 **Smart T9 Search:** Quickly find contacts by typing names or phone numbers directly from the dial pad.
-- 📞 **Custom In-Call UI:** Clean in-call experience with automatic proximity detection, audio routing, and speaker controls.
-- 🗂️ **Detailed Call Logs:** Comprehensive, categorized call history with quick-action shortcuts (Call, Message, Info).
-- 🚫 **Spam & Number Blocking:** Easily block unwanted numbers directly from call details or logs.
-- 🛠️ **Built with Jetpack Compose:** 100% modern, declarative Android UI stack for smooth performance and low memory overhead.
-- 🔓 **Fully Open Source** Zero trackers, zero ads, fully transparent code under GPL v3.
+- **T9 Search & Speed Dial**: Quick contact lookup by name or number right on the keypad, plus 1–9 speed dial shortcuts.
+- **Dual SIM Support**: Outbound SIM selector, per-contact preferred SIM memory, and carrier tags.
+- **Call Recording via Shizuku**: Internal 2-way call audio capture via Shizuku ADB permissions, without needing root or accessibility services (adapted from [ShizuCallRecorder](https://github.com/kitsumed/ShizuCallRecorder)). Standard microphone recording fallback included.
+- **In-Call Screen**: Audio routing (earpiece, speaker, Bluetooth, wired headset), hold, mute, in-call dialpad, and call notes.
+- **Call Notifications**: Android-native heads-up notifications with answer, decline, and speaker toggles.
+- **Private Contacts Vault**: Keep specific contacts, their call history, and notifications locked behind biometrics or device PIN.
+- **Contact Management**: Edit multiple numbers, emails, and addresses per contact with custom labels, contact deduplication, and local or cloud account storage.
+- **Fake Incoming Call**: Simulate an incoming call with custom caller name, number, ringtone, and timer.
+- **Blocklist**: Block spam numbers directly from call logs or contact details.
+- **Customization**: Material You dynamic color theming, configurable dialpad layouts, avatar shapes, and app-level biometric lock.
 
-## 📸 Screenshots
+## Screenshots
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/1.png" width="260">
-  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/2.png" width="260">
-  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/3.png" width="260">
-  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/4.png" width="260">
-  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/5.png" width="260">
-  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/6.png" width="260">
+  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/1.png" width="280" alt="Recents">
+  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/2.png" width="280" alt="Dialpad">
+  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/3.png" width="280" alt="Contact Details">
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/4.png" width="280" alt="Settings (Dark)">
+  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/5.png" width="280" alt="In-Call Screen (Dark)">
+  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/6.png" width="280" alt="Private Contacts Vault">
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/7.png" width="280" alt="In-Call Screen (Light)">
+  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/8.png" width="280" alt="Call Analytics & Tracking">
+  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/9.png" width="280" alt="Manage Contacts & Storage">
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/10.png" width="280" alt="UI & Dynamic Theming">
+  <img src="https://raw.githubusercontent.com/user-grinch/RivoPhoneApp/main/images/11.png" width="280" alt="Settings Overview">
 </p>
 
-## 🔐 Security
+---
 
-**APK Certificate Signing Key Hash:**
+## Downloads
+
+- **Google Play**: Get the official release from the [Play Store](https://play.google.com/store/apps/details?id=com.grinch.rivo4).
+- **Obtainium**: Add via [Obtainium](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/{%22id%22:%22com.grinch.rivo4%22,%22url%22:%22https://github.com/user-grinch/RivoPhoneApp%22,%22author%22:%22user-grinch%22,%22name%22:%22RivoPhoneApp%22}) for automated GitHub release updates.
+- **GitHub Releases**: Download pre-built APKs directly from [Releases](https://github.com/user-grinch/RivoPhoneApp/releases).
+
+<details>
+<summary><b>APK Signing Certificate Hash (SHA-256)</b></summary>
 
 ```text
-com.grinch.rivo4
-AF:7B:C8:10:1A:C9:D7:4B:93:5B:31:4B:71:C7:EE:1D:ED:0F:9D:45:AB:07:4C:72:7F:82:11:89:F4:56:50:C5
-
+Package: com.grinch.rivo4
+SHA-256: AF:7B:C8:10:1A:C9:D7:4B:93:5B:31:4B:71:C7:EE:1D:ED:0F:9D:45:AB:07:4C:72:7F:82:11:89:F4:56:50:C5
 ```
+</details>
 
-## 🌍 Translations
+## Donation
 
-Help us make Rivo accessible to everyone! You can contribute to translating Rivo into your native language via our [Crowdin Project](https://crowdin.com/project/rivophone).
+Rivo is free and open-source software. If you find the app useful and want to support ongoing development, you can contribute in two ways:
 
-## 🤝 Contributing
+* **In-App Tip Jar (Google Play)**: Download the [Google Play version](https://play.google.com/store/apps/details?id=com.grinch.rivo4) of Rivo to leave a tip directly through the in-app Tip Jar via Google Play Billing.
+* **Patreon**: Support development directly on [Patreon](https://www.patreon.com/c/grinch_).
 
-We welcome issues, feature requests, and pull requests from the community!
+## Community & Contributing
 
-* **Code & Bugs:** Feel free to open an issue or submit a pull request directly on GitHub.
-* **Translations:** Help localize Rivo on Crowdin.
-* **Discussion:** Join our Discord server to discuss ideas, report bugs, or just hang out with the community.
+* **Discord**: Join our [Discord server](https://discord.gg/NtEvU3726e) for discussions and support.
+* **Translations**: Help localize Rivo on [Crowdin](https://crowdin.com/project/rivophone).
+* **Issues & Bugs**: Report bugs or request features via [GitHub Issues](https://github.com/user-grinch/RivoPhoneApp/issues).
 
-## 📄 License
+## Acknowledgements
 
-This project is licensed under the GNU GPL v3.0.
+* **[ShizuCallRecorder](https://github.com/kitsumed/ShizuCallRecorder)** by [kitsumed](https://github.com/kitsumed): The Shizuku-based ADB call recording pipeline and scrcpy integration are adapted from ShizuCallRecorder (GPLv3+ with Section 7 Additional Terms). *Rivo is an independent project and is not affiliated with or endorsed by ShizuCallRecorder.*
 
-See the [LICENSE](https://www.google.com/search?q=LICENSE) file for more details.
+## License
+
+Licensed under the [GNU General Public License v3.0 (GPL-3.0)](https://www.google.com/search?q=LICENSE).

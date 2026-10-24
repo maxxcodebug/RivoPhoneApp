@@ -1,7 +1,9 @@
 package com.grinch.rivo4.modal.data
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 
+@Immutable
 @Serializable
 data class ContactEvent(
     val type: Int,
@@ -9,6 +11,7 @@ data class ContactEvent(
     val date: String
 )
 
+@Immutable
 @Serializable
 data class PhoneNumberEntry(
     val number: String,
@@ -16,6 +19,7 @@ data class PhoneNumberEntry(
     val label: String? = null
 )
 
+@Immutable
 @Serializable
 data class EmailEntry(
     val address: String,
@@ -23,12 +27,23 @@ data class EmailEntry(
     val label: String? = null
 )
 
+@Immutable
+@Serializable
+data class AccountEntry(
+    val name: String?,
+    val type: String?
+)
+
+@Immutable
 @Serializable
 data class Contact(
     val id: String,
     val name: String,
+    val prefix: String? = null,
     val givenName: String? = null,
+    val middleName: String? = null,
     val familyName: String? = null,
+    val suffix: String? = null,
     val nickname: String? = null,
     val phoneNumbers: List<String> = emptyList(),
     val emails: List<String> = emptyList(),
@@ -43,5 +58,32 @@ data class Contact(
     val accountType: String? = null,
     val isPrivate: Boolean = false,
     val isHidden: Boolean = false,
-    val notes: String? = null
-)
+    val notes: String? = null,
+    val linkedAccounts: List<AccountEntry> = emptyList()
+) {
+    val formattedDisplayName: String
+        get() {
+            val parts = listOfNotNull(
+                prefix?.trim()?.ifBlank { null },
+                givenName?.trim()?.ifBlank { null },
+                middleName?.trim()?.ifBlank { null },
+                familyName?.trim()?.ifBlank { null },
+                suffix?.trim()?.ifBlank { null }
+            )
+            return if (parts.isNotEmpty()) {
+                parts.joinToString(" ")
+            } else if (name.isNotBlank() && name != "Unnamed" && name != "Unknown") {
+                name
+            } else if (!nickname.isNullOrBlank()) {
+                nickname
+            } else if (emails.isNotEmpty()) {
+                emails.first()
+            } else if (emailEntries.isNotEmpty()) {
+                emailEntries.first().address
+            } else if (phoneNumbers.isNotEmpty()) {
+                phoneNumbers.first()
+            } else {
+                name.ifBlank { "Unnamed" }
+            }
+        }
+}

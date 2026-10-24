@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,6 +33,7 @@ import androidx.compose.ui.text.AnnotatedString
 import com.grinch.rivo4.controller.util.SocialUtils
 import com.grinch.rivo4.modal.data.Contact
 import com.grinch.rivo4.modal.data.SwipeActionType
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.grinch.rivo4.controller.util.ContactUtils
 import com.grinch.rivo4.controller.util.PreferenceManager
 import com.grinch.rivo4.controller.util.formatPhoneNumber
@@ -66,10 +68,15 @@ fun AZListScroll(
     val swipeEnabled = remember(settingsState) { prefs.isSwipeActionsEnabled() } && selectedIds.isEmpty()
     val swipeRightAction = remember(settingsState) { SwipeActionType.fromId(prefs.getSwipeRightAction()) }
     val swipeLeftAction = remember(settingsState) { SwipeActionType.fromId(prefs.getSwipeLeftAction()) }
+    val showSectionHeaders = remember(settingsState) { prefs.isShowContactSectionHeaders() }
 
     if (hapticScrollEnabled) {
-        LaunchedEffect(listState.firstVisibleItemIndex) {
-            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+        LaunchedEffect(listState) {
+            snapshotFlow { listState.firstVisibleItemIndex }
+                .distinctUntilChanged()
+                .collect {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                }
         }
     }
 
@@ -77,7 +84,8 @@ fun AZListScroll(
         if (grouped != null) return@remember grouped
         
         val mainGroups = contacts.groupBy {
-            val firstChar = it.name.firstOrNull()?.uppercaseChar() ?: '#'
+            val sortKey = ContactUtils.getContactSortKey(it, displayOrder)
+            val firstChar = sortKey.firstOrNull()?.uppercaseChar() ?: '#'
             if (firstChar.isLetter()) firstChar else '#'
         }.toMutableMap()
 
@@ -93,12 +101,40 @@ fun AZListScroll(
         finalMap
     }
 
-    val alphabetIndices = remember(finalGrouped, header != null) {
+    val (flatContactIndices, totalFlatCount, lastContactId) = remember(finalGrouped) {
+        val map = mutableMapOf<String, Int>()
+        var idx = 0
+        var lastId: String? = null
+        finalGrouped.values.forEach { group ->
+            group.forEach { contact ->
+                map[contact.id] = idx
+                idx++
+                lastId = contact.id
+            }
+        }
+        Triple(map, idx, lastId)
+    }
+
+    val adsEnabled = remember(settingsState) {
+        com.grinch.rivo4.view.components.ad.IS_ADS_SUPPORTED &&
+            prefs.getBoolean(PreferenceManager.KEY_ENABLE_ADS, true)
+    }
+
+    val alphabetIndices = remember(finalGrouped, header != null, showSectionHeaders, adsEnabled) {
         val map = mutableMapOf<Char, Int>()
         var currentIndex = if (header != null) 1 else 0
-        finalGrouped.forEach { (char, _) ->
+        finalGrouped.entries.forEachIndexed { groupIndex, (char, contactsForChar) ->
             map[char] = currentIndex
-            currentIndex += 2 
+            // 1 for section header
+            if (showSectionHeaders) {
+                currentIndex += 1
+            }
+            // 1 for each contact
+            currentIndex += contactsForChar.size
+            // 1 for banner ad if ads enabled and groupIndex % 3 == 1
+            if (adsEnabled && groupIndex % 3 == 1) {
+                currentIndex += 1
+            }
         }
         map
     }
@@ -116,117 +152,180 @@ fun AZListScroll(
         }
     }
 
+    val surfaceStyle = rivoSurfaceStyle()
+    val showCards = surfaceStyle.showCards
+
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 100.dp)
+            contentPadding = PaddingValues(bottom = 100.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             if (header != null) {
-                item {
+                item(key = "header_top") {
                     header()
                 }
             }
 
             finalGrouped.entries.forEachIndexed { groupIndex, (initial, contactsForChar) ->
-                stickyHeader {
-                    Box(
+                if (showSectionHeaders) {
+                    item(key = "header_$initial", contentType = "header") {
+                        RivoSectionHeader(
+                        title = initial.toString(),
+                        modifier = Modifier.padding(
+                            start = 16.dp,
+                            end = 16.dp,
+                            top = if (groupIndex == 0 && header == null) 4.dp else 16.dp,
+                            bottom = 4.dp
+                        )
+                    )
+                }
+                }
+
+                itemsIndexed(
+                    items = contactsForChar,
+                    key = { _, contact -> contact.id },
+                    contentType = { _, _ -> "contact" }
+                ) { index, contact ->
+                    val shape = if (showSectionHeaders) {
+                        rivoGroupedItemShape(index, contactsForChar.size)
+                    } else {
+                        val overallIdx = flatContactIndices[contact.id] ?: index
+                        rivoGroupedItemShape(overallIdx, totalFlatCount)
+                    }
+
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface)
-                            .padding(horizontal = 16.dp, vertical = 2.dp)
+                            .then(if (showCards) Modifier.padding(horizontal = 16.dp) else Modifier)
                     ) {
-                        Text(
-                            text = initial.toString(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(start = 8.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(
+                                    if (showCards) {
+                                        Modifier
+                                            .clip(shape)
+                                            .background(
+                                                if (selectedIds.contains(contact.id))
+                                                    MaterialTheme.colorScheme.secondaryContainer
+                                                else
+                                                    MaterialTheme.colorScheme.surfaceContainerLow
+                                            )
+                                    } else {
+                                        if (selectedIds.contains(contact.id))
+                                            Modifier.background(MaterialTheme.colorScheme.secondaryContainer)
+                                        else
+                                            Modifier
+                                    }
+                                )
+                        ) {
+                        val displayName = if (contact.name.isNotBlank() && contact.name != stringResource(R.string.label_unknown) && contact.name != "Unnamed") {
+                            ContactUtils.formatContactName(contact, displayOrder)
+                        } else {
+                            contact.emails.firstOrNull()
+                                ?: contact.emailEntries.firstOrNull()?.address
+                                ?: contact.phoneNumbers.firstOrNull()?.let { formatPhoneNumber(it) }
+                                ?: contact.name.ifBlank { stringResource(R.string.label_unknown) }
+                        }
+
+                        RivoSwipeToActionBox(
+                            enabled = swipeEnabled,
+                            swipeRightAction = swipeRightAction,
+                            swipeLeftAction = swipeLeftAction,
+                            onTriggerAction = { action ->
+                                val phone = contact.phoneNumbers.firstOrNull().orEmpty()
+                                when (action) {
+                                    SwipeActionType.CALL -> callLauncher.dial(phone, contact)
+                                    SwipeActionType.MESSAGE -> messageLauncher.sendMessage(phone, contact)
+                                    SwipeActionType.VIDEO_CALL -> videoLauncher.startVideoCall(phone, contact)
+                                    SwipeActionType.WHATSAPP -> SocialUtils.openWhatsApp(context, phone)
+                                    SwipeActionType.COPY_NUMBER -> {
+                                        if (phone.isNotBlank()) {
+                                            clipboardManager.setText(AnnotatedString(phone))
+                                            Toast.makeText(context, context.getString(R.string.number_copied_toast), Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                    SwipeActionType.VIEW_CONTACT -> {
+                                        navigator.navigate(ContactDetailsScreenDestination(contactId = contact.id))
+                                    }
+                                    SwipeActionType.SHARE -> {
+                                        val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(android.content.Intent.EXTRA_TEXT, "${contact.name}: $phone")
+                                        }
+                                        context.startActivity(android.content.Intent.createChooser(shareIntent, null))
+                                    }
+                                    SwipeActionType.BLOCK -> {
+                                        if (phone.isNotBlank()) {
+                                            com.grinch.rivo4.controller.util.BlockedNumbersManager.block(context, phone)
+                                            Toast.makeText(context, context.getString(R.string.toast_blocked_number, phone), Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                    SwipeActionType.DELETE -> {}
+                                    SwipeActionType.NONE -> {}
+                                }
+                            }
+                        ) {
+                            RivoListItem(
+                                headline = displayName,
+                                supporting = null,
+                                avatarName = if (contact.name.isNotBlank() && contact.name != stringResource(R.string.label_unknown) && contact.name != "Unnamed") {
+                                    contact.name
+                                } else {
+                                    contact.emails.firstOrNull() ?: contact.phoneNumbers.firstOrNull() ?: ""
+                                },
+                                photoUri = contact.photoUri,
+                                trailingContent = {
+                                    if (contact.isHidden) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.VisibilityOff,
+                                            contentDescription = stringResource(R.string.loc_private_storage_hidden),
+                                            tint = MaterialTheme.colorScheme.tertiary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    } else if (contact.isPrivate) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Lock,
+                                            contentDescription = stringResource(R.string.loc_private_storage),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    if (selectedIds.isNotEmpty()) {
+                                        onToggleSelection(contact.id)
+                                    } else {
+                                        navigator.navigate(ContactDetailsScreenDestination(contactId = contact.id))
+                                    }
+                                },
+                                onLongClick = {
+                                    onToggleSelection(contact.id)
+                                },
+                                selected = selectedIds.contains(contact.id),
+                                isCompact = false
+                            )
+                        }
+                        }
+                        val showDivider = if (showSectionHeaders) {
+                            index < contactsForChar.size - 1
+                        } else {
+                            lastContactId != contact.id
+                        }
+                        if (!showCards && showDivider) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                            )
+                        }
                     }
                 }
 
-                item {
-                    Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                        RivoExpressiveCard(isCompact = true) {
-                            val unknownLabel = stringResource(R.string.label_unknown)
-                            contactsForChar.forEachIndexed { index, contact ->
-                                val displayName = ContactUtils.formatContactName(
-                                    contact.name.ifEmpty {
-                                        contact.phoneNumbers.firstOrNull()?.let { formatPhoneNumber(it) } ?: unknownLabel
-                                    },
-                                    displayOrder
-                                )
-                                RivoSwipeToActionBox(
-                                    enabled = swipeEnabled,
-                                    swipeRightAction = swipeRightAction,
-                                    swipeLeftAction = swipeLeftAction,
-                                    onTriggerAction = { action ->
-                                        val phone = contact.phoneNumbers.firstOrNull().orEmpty()
-                                        when (action) {
-                                            SwipeActionType.CALL -> callLauncher.dial(phone, contact)
-                                            SwipeActionType.MESSAGE -> messageLauncher.sendMessage(phone, contact)
-                                            SwipeActionType.VIDEO_CALL -> videoLauncher.startVideoCall(phone, contact)
-                                            SwipeActionType.WHATSAPP -> SocialUtils.openWhatsApp(context, phone)
-                                            SwipeActionType.COPY_NUMBER -> {
-                                                if (phone.isNotBlank()) {
-                                                    clipboardManager.setText(AnnotatedString(phone))
-                                                    Toast.makeText(context, context.getString(R.string.number_copied_toast), Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                            SwipeActionType.DELETE -> {}
-                                            SwipeActionType.NONE -> {}
-                                        }
-                                    }
-                                ) {
-                                    RivoListItem(
-                                        headline = displayName,
-                                        supporting = null,
-                                        avatarName = contact.name,
-                                        photoUri = contact.photoUri,
-                                        trailingContent = {
-                                            if (contact.isHidden) {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.VisibilityOff,
-                                                    contentDescription = "Private Storage (Hidden)",
-                                                    tint = MaterialTheme.colorScheme.tertiary,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            } else if (contact.isPrivate) {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Lock,
-                                                    contentDescription = "Private Storage",
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            }
-                                        },
-                                        onClick = {
-                                            if (selectedIds.isNotEmpty()) {
-                                                onToggleSelection(contact.id)
-                                            } else {
-                                                navigator.navigate(ContactDetailsScreenDestination(contactId = contact.id))
-                                            }
-                                        },
-                                        onLongClick = {
-                                            onToggleSelection(contact.id)
-                                        },
-                                        selected = selectedIds.contains(contact.id),
-                                        isCompact = true
-                                    )
-                                }
-                                if (index < contactsForChar.size - 1) {
-                                    RivoDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                                }
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-                if (groupIndex % 3 == 1) {
-                    item {
+                if (adsEnabled && groupIndex % 3 == 1) {
+                    item(key = "ad_$groupIndex") {
                         com.grinch.rivo4.view.components.ad.BannerAd()
-                        Spacer(modifier = Modifier.height(8.dp))
                     }
                 }
             }
@@ -239,9 +338,11 @@ fun AZListScroll(
                 .align(Alignment.CenterEnd)
                 .padding(end = 4.dp),
             onLetterSelected = { char ->
-                draggingChar = char
-                val index = alphabetIndices[char] ?: return@AlphabetSideBar
-                scope.launch { listState.scrollToItem(index) }
+                if (draggingChar != char) {
+                    draggingChar = char
+                    val index = alphabetIndices[char] ?: return@AlphabetSideBar
+                    scope.launch { listState.scrollToItem(index) }
+                }
             },
             onDragEnd = { draggingChar = null }
         )

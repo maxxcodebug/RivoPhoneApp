@@ -9,7 +9,8 @@ interface IContactsRepository {
     fun getContactById(contactId: String): Contact?
     fun getContactByNumber(number: String): Contact?
     fun toggleFavorite(contactId: String, isFavorite: Boolean)
-    fun saveContact(contact: Contact)
+    fun saveContact(contact: Contact): Boolean
+    fun saveContactWithResult(contact: Contact): Pair<Boolean, String?> = Pair(saveContact(contact), null)
     fun deleteContact(contactId: String)
     fun deleteContacts(contactIds: List<String>)
     fun moveContacts(contactIds: List<String>, accountName: String?, accountType: String?)
@@ -26,4 +27,10 @@ interface IContactsRepository {
     fun importPrivateContacts(uri: Uri)
     fun isNumberHidden(number: String): Boolean
     fun getHiddenNumbers(): List<String>
+
+    fun getTrashedContacts(): List<com.grinch.rivo4.modal.db.TrashedContactEntity>
+    fun restoreTrashedContact(localId: Long): Boolean
+    fun permanentlyDeleteTrashedContact(localId: Long)
+    fun emptyTrash()
+    fun pruneOldTrash()
 }

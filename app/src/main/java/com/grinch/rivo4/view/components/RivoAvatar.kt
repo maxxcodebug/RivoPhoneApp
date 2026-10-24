@@ -1,5 +1,7 @@
 package com.grinch.rivo4.view.components
 
+import com.grinch.rivo4.controller.util.ContactUtils
+
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
@@ -51,21 +53,13 @@ import com.grinch.rivo4.view.theme.rivoAvatarShape
 import org.koin.compose.koinInject
 import kotlin.math.abs
 
+// M3 Avatar - use androidx.compose.material3.Avatar
+// Custom style replaced with M3 Avatar parameters
 @Immutable
-data class RivoAvatarStyle(
-    val showPicture: Boolean,
-    val showFirstLetter: Boolean,
-    val colorful: Boolean,
-    val gradient: Boolean,
-    val shapeIndex: Int,
-    val shape: Shape
-)
+data class RivoAvatarStyle(    val showPicture: Boolean,    val showFirstLetter: Boolean,    val colorful: Boolean,    val gradient: Boolean,    val shape: Shape)
 
 @Immutable
-data class RivoAvatarColors(
-    val container: Color,
-    val content: Color
-)
+data class RivoAvatarColors(    val container: Color,    val content: Color)
 
 object RivoAvatarDefaults {
     const val HueCount: Int = 12
@@ -107,8 +101,8 @@ fun rememberRivoAvatarStyle(prefs: PreferenceManager = koinInject()): RivoAvatar
         prefs.getInt(PreferenceManager.KEY_AVATAR_SHAPE, RIVO_AVATAR_SHAPE_SQUIRCLE)
     }
     val shape = rivoAvatarShape(shapeIndex)
-    return remember(showPicture, showFirstLetter, colorful, gradient, shapeIndex, shape) {
-        RivoAvatarStyle(showPicture, showFirstLetter, colorful, gradient, shapeIndex, shape)
+    return remember(showPicture, showFirstLetter, colorful, gradient, shape) {
+        RivoAvatarStyle(showPicture, showFirstLetter, colorful, gradient, shape)
     }
 }
 
@@ -196,10 +190,11 @@ private fun gradientAvatarBrush(name: String, dark: Boolean): Brush {
 private val WHITESPACE_REGEX = Regex("\\s+")
 
 private fun contactInitials(name: String, useTwo: Boolean): String {
-    val letters = name.filter { it.isLetter() }
+    val cleanName = ContactUtils.stripTitlePrefix(name)
+    val letters = cleanName.filter { it.isLetter() }
     if (letters.isEmpty()) return ""
     if (!useTwo) return letters.first().uppercase()
-    val words = name.trim().split(WHITESPACE_REGEX).filter { it.any { c -> c.isLetter() } }
+    val words = cleanName.trim().split(WHITESPACE_REGEX).filter { it.any { c -> c.isLetter() } }
     return if (words.size >= 2) {
         words.take(2).joinToString("") { word ->
             word.first { it.isLetter() }.uppercase()
@@ -207,6 +202,25 @@ private fun contactInitials(name: String, useTwo: Boolean): String {
     } else {
         letters.take(2).uppercase()
     }
+}
+
+@Composable
+private fun rememberMorphShapeIfEnabled(
+    morphEnabled: Boolean,
+    morphSelected: Boolean,
+    morphOnPress: Boolean,
+    pressed: Boolean,
+    morphStart: RoundedPolygon,
+    morphEnd: RoundedPolygon
+): Shape? {
+    if (!morphEnabled) return null
+    val morphTarget = if (morphSelected || (morphOnPress && pressed)) 1f else 0f
+    val morphProgress by animateFloatAsState(
+        targetValue = morphTarget,
+        animationSpec = RivoMotion.shapeMorph(),
+        label = "RivoAvatarMorph"
+    )
+    return rememberRivoMorphShape(morphStart, morphEnd) { morphProgress }
 }
 
 @Composable
@@ -229,21 +243,30 @@ fun RivoAvatar(
     morphStart: RoundedPolygon = RivoMaterialShapes.AvatarMorphStart,
     morphEnd: RoundedPolygon = RivoMaterialShapes.AvatarMorphEnd
 ) {
-    val ownInteractionSource = remember { MutableInteractionSource() }
-    val resolvedInteractionSource = interactionSource ?: ownInteractionSource
-    val pressed by resolvedInteractionSource.collectIsPressedAsState()
-
     val morphEnabled = morphOnPress || morphSelected
-    val morphTarget = if (morphSelected || (morphOnPress && pressed)) 1f else 0f
-    val morphProgress by animateFloatAsState(
-        targetValue = morphTarget,
-        animationSpec = RivoMotion.shapeMorph(),
-        label = "RivoAvatarMorph"
+    val resolvedInteractionSource = if (morphEnabled || onClick != null) {
+        interactionSource ?: remember { MutableInteractionSource() }
+    } else {
+        null
+    }
+    val pressed = if (morphEnabled && resolvedInteractionSource != null) {
+        val pressedState by resolvedInteractionSource.collectIsPressedAsState()
+        pressedState
+    } else {
+        false
+    }
+
+    val morphShape = rememberMorphShapeIfEnabled(
+        morphEnabled = morphEnabled,
+        morphSelected = morphSelected,
+        morphOnPress = morphOnPress,
+        pressed = pressed,
+        morphStart = morphStart,
+        morphEnd = morphEnd
     )
-    val morphShape = rememberRivoMorphShape(morphStart, morphEnd) { morphProgress }
 
     val avatarShape = when {
-        morphEnabled -> morphShape
+        morphEnabled && morphShape != null -> morphShape
         shape != null -> shape
         else -> style.shape
     }
@@ -254,6 +277,9 @@ fun RivoAvatar(
         remember(name, dark) { gradientAvatarBrush(name, dark) }
     } else null
     val hasLetters = name.any { it.isLetter() }
+    val initials = if (style.showFirstLetter && hasLetters) {
+        remember(name, style.gradient) { contactInitials(name, style.gradient) }
+    } else ""
     val description = contentDescription
 
     val rootModifier = modifier
@@ -316,7 +342,7 @@ fun RivoAvatar(
                 )
             } else if (style.showFirstLetter && hasLetters) {
                 Text(
-                    text = contactInitials(name, style.gradient),
+                    text = initials,
                     style = textStyle,
                     color = colors.content
                 )

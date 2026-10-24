@@ -1,5 +1,7 @@
 package com.grinch.rivo4.controller.permission
 
+import com.grinch.rivo4.R
+
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -15,6 +17,7 @@ import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.PictureInPicture
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material.icons.outlined.FolderSpecial
@@ -136,8 +139,8 @@ object PermissionChecklistHelper {
         val items = mutableListOf(
             PermissionCheckItem(
                 id = "default_dialer",
-                title = "Default Phone App",
-                description = "Required to answer calls, handle incoming phone calls, and manage call blocking.",
+                title = context.getString(R.string.permission_default_phone_app_title),
+                description = context.getString(R.string.permission_default_phone_app_description),
                 icon = Icons.Outlined.VerifiedUser,
                 isGranted = isDefaultDialer(context),
                 isEssential = true,
@@ -145,8 +148,8 @@ object PermissionChecklistHelper {
             ),
             PermissionCheckItem(
                 id = "phone_state",
-                title = "Phone & SIM Access",
-                description = "Required to place calls directly, manage dual SIM cards, and detect call status.",
+                title = context.getString(R.string.permission_phone_sim_title),
+                description = context.getString(R.string.permission_phone_sim_description),
                 icon = Icons.Outlined.Call,
                 isGranted = hasPhonePermission(context),
                 isEssential = true,
@@ -155,8 +158,8 @@ object PermissionChecklistHelper {
             ),
             PermissionCheckItem(
                 id = "contacts",
-                title = "Contacts",
-                description = "Required to display contact names, show caller info, and search contacts via T9 dialpad.",
+                title = context.getString(R.string.permission_contacts_title),
+                description = context.getString(R.string.permission_contacts_description),
                 icon = Icons.Outlined.Contacts,
                 isGranted = hasContactsPermission(context),
                 isEssential = true,
@@ -165,8 +168,8 @@ object PermissionChecklistHelper {
             ),
             PermissionCheckItem(
                 id = "call_log",
-                title = "Call History",
-                description = "Required to display your incoming, outgoing, and missed call history in Recents.",
+                title = context.getString(R.string.permission_call_history_title),
+                description = context.getString(R.string.permission_call_history_description),
                 icon = Icons.Outlined.History,
                 isGranted = hasCallLogPermission(context),
                 isEssential = true,
@@ -179,8 +182,8 @@ object PermissionChecklistHelper {
             items.add(
                 PermissionCheckItem(
                     id = "notifications",
-                    title = "Call Notifications",
-                    description = "Required to show incoming call banners, heads-up notifications, and call status.",
+                    title = context.getString(R.string.permission_call_notifications_title),
+                    description = context.getString(R.string.permission_call_notifications_description),
                     icon = Icons.Outlined.Notifications,
                     isGranted = hasNotificationPermission(context),
                     isEssential = true,
@@ -196,17 +199,91 @@ object PermissionChecklistHelper {
     fun getRecommendedItems(context: Context): List<PermissionCheckItem> {
         val items = mutableListOf<PermissionCheckItem>()
 
-        if (com.grinch.rivo4.controller.util.OemPermissionHelper.isVivo()) {
+        if (com.grinch.rivo4.controller.util.OemPermissionHelper.isXiaomi()) {
+            items.add(
+                PermissionCheckItem(
+                    id = "xiaomi_lockscreen",
+                    title = context.getString(R.string.permission_lock_screen_title),
+                    description = context.getString(R.string.permission_lock_screen_description),
+                    icon = Icons.Outlined.Lock,
+                    isGranted = com.grinch.rivo4.controller.util.OemPermissionHelper.isXiaomiLockScreenGranted(context),
+                    isEssential = false,
+                    actionType = PermissionActionType.SETTINGS,
+                    actionLabel = context.getString(R.string.action_allow)
+                )
+            )
+            items.add(
+                PermissionCheckItem(
+                    id = "xiaomi_background_popup",
+                    title = context.getString(R.string.permission_background_popup_title),
+                    description = context.getString(R.string.permission_background_popup_description),
+                    icon = Icons.Outlined.PictureInPicture,
+                    isGranted = com.grinch.rivo4.controller.util.OemPermissionHelper.isXiaomiBackgroundPopupGranted(context),
+                    isEssential = false,
+                    actionType = PermissionActionType.SETTINGS,
+                    actionLabel = context.getString(R.string.action_allow)
+                )
+            )
+            items.add(
+                PermissionCheckItem(
+                    id = "oem_autostart",
+                    title = context.getString(R.string.permission_autostart_title),
+                    description = context.getString(R.string.permission_autostart_description),
+                    icon = Icons.Outlined.BatteryChargingFull,
+                    isGranted = com.grinch.rivo4.controller.util.OemPermissionHelper.isXiaomiAutostartGranted(context),
+                    isEssential = false,
+                    actionType = PermissionActionType.SETTINGS,
+                    actionLabel = context.getString(R.string.action_manage)
+                )
+            )
+        } else if (com.grinch.rivo4.controller.util.OemPermissionHelper.isVivo()) {
             items.add(
                 PermissionCheckItem(
                     id = "vivo_background_popup",
-                    title = "Vivo Background Pop-up",
-                    description = "Allow Rivo to display incoming call screens and floating alerts over other apps on Vivo/iQOO devices.",
+                    title = context.getString(R.string.permission_vivo_background_popup_title),
+                    description = context.getString(R.string.permission_vivo_background_popup_description),
                     icon = Icons.Outlined.PictureInPicture,
                     isGranted = hasOverlayPermission(context),
                     isEssential = false,
                     actionType = PermissionActionType.SETTINGS,
-                    actionLabel = "Open Vivo Settings"
+                    actionLabel = context.getString(R.string.action_settings)
+                )
+            )
+            items.add(
+                PermissionCheckItem(
+                    id = "oem_autostart",
+                    title = context.getString(R.string.permission_vivo_autostart_title),
+                    description = context.getString(R.string.permission_vivo_autostart_description),
+                    icon = Icons.Outlined.BatteryChargingFull,
+                    isGranted = false,
+                    isEssential = false,
+                    actionType = PermissionActionType.SETTINGS,
+                    actionLabel = context.getString(R.string.action_manage)
+                )
+            )
+        } else if (com.grinch.rivo4.controller.util.OemPermissionHelper.isOemDevice()) {
+            items.add(
+                PermissionCheckItem(
+                    id = "oem_lockscreen_popup",
+                    title = context.getString(R.string.permission_oem_permissions_title, com.grinch.rivo4.controller.util.OemPermissionHelper.getOemBrandDisplayName()),
+                    description = context.getString(R.string.permission_oem_permissions_description),
+                    icon = Icons.Outlined.PictureInPicture,
+                    isGranted = hasOverlayPermission(context),
+                    isEssential = false,
+                    actionType = PermissionActionType.SETTINGS,
+                    actionLabel = context.getString(R.string.action_settings)
+                )
+            )
+            items.add(
+                PermissionCheckItem(
+                    id = "oem_autostart",
+                    title = context.getString(R.string.permission_oem_autostart_title, com.grinch.rivo4.controller.util.OemPermissionHelper.getOemBrandDisplayName()),
+                    description = context.getString(R.string.permission_oem_autostart_description),
+                    icon = Icons.Outlined.BatteryChargingFull,
+                    isGranted = false,
+                    isEssential = false,
+                    actionType = PermissionActionType.SETTINGS,
+                    actionLabel = context.getString(R.string.action_manage)
                 )
             )
         }
@@ -214,8 +291,8 @@ object PermissionChecklistHelper {
         items.add(
             PermissionCheckItem(
                 id = "overlay",
-                title = "Floating Call Bubble",
-                description = "Multitask while on a call with a floating pill overlay with mute, speaker, and end call controls.",
+                title = context.getString(R.string.permission_floating_bubble_title),
+                description = context.getString(R.string.permission_floating_bubble_description),
                 icon = Icons.Outlined.PictureInPicture,
                 isGranted = hasOverlayPermission(context),
                 isEssential = false,
@@ -226,8 +303,8 @@ object PermissionChecklistHelper {
         items.add(
             PermissionCheckItem(
                 id = "battery",
-                title = "Reliable Background Calls",
-                description = "Prevents system battery saver from suppressing incoming calls when your screen is locked.",
+                title = context.getString(R.string.permission_reliable_calls_title),
+                description = context.getString(R.string.permission_reliable_calls_description),
                 icon = Icons.Outlined.BatteryChargingFull,
                 isGranted = isBatteryOptimizationIgnored(context),
                 isEssential = false,
@@ -238,32 +315,13 @@ object PermissionChecklistHelper {
         items.add(
             PermissionCheckItem(
                 id = "audio_recording",
-                title = "Call Recording (Microphone)",
-                description = "Record incoming and outgoing phone calls and voice notes directly within the app.",
+                title = context.getString(R.string.permission_recording_title),
+                description = context.getString(R.string.permission_recording_description),
                 icon = Icons.Outlined.Mic,
                 isGranted = hasAudioRecordPermission(context),
                 isEssential = false,
                 actionType = PermissionActionType.RUNTIME,
                 permissions = listOf(Manifest.permission.RECORD_AUDIO)
-            )
-        )
-
-        // Storage Access for saving call recordings directly
-        val hasStorage = hasStoragePermission(context)
-        items.add(
-            PermissionCheckItem(
-                id = "storage_recording",
-                title = "Recordings Storage",
-                description = if (hasStorage) {
-                    "Call recordings can be stored directly in Internal Storage without restrictions."
-                } else {
-                    "Allow storage access to save call recordings directly to Internal Storage / ${CallRecorder.DIRECTORY_NAME}."
-                },
-                icon = Icons.Outlined.FolderSpecial,
-                isGranted = hasStorage,
-                isEssential = false,
-                actionType = PermissionActionType.STORAGE,
-                actionLabel = "Allow"
             )
         )
 
@@ -274,37 +332,37 @@ object PermissionChecklistHelper {
 
         val (shizukuDesc, shizukuActionLabel, shizukuStatusNote) = when {
             shizukuGranted -> Triple(
-                "Internal call audio capture is enabled for crystal-clear 2-way call recordings.",
-                "Granted",
+                context.getString(R.string.permission_shizuku_audio_description),
+                context.getString(R.string.permission_shizuku_granted),
                 null
             )
             !shizukuInstalled -> Triple(
-                "Shizuku is not installed. Tap to view installation options (Play Store / Website).",
-                "Install",
-                "Not Installed"
+                context.getString(R.string.permission_shizuku_not_installed),
+                context.getString(R.string.permission_shizuku_install),
+                context.getString(R.string.permission_shizuku_not_installed_status)
             )
             !shizukuRunning -> Triple(
-                "Shizuku service is stopped. Open Shizuku and start via Wireless Debugging or Root.",
-                "Open",
-                "Service Stopped"
+                context.getString(R.string.permission_shizuku_service_stopped),
+                context.getString(R.string.permission_shizuku_open),
+                context.getString(R.string.permission_shizuku_service_stopped_status)
             )
             else -> Triple(
-                "Shizuku service is running. Grant permission to capture internal 2-way call audio.",
-                "Grant",
-                "Needs Permission"
+                context.getString(R.string.permission_shizuku_needs_permission),
+                context.getString(R.string.permission_shizuku_grant),
+                context.getString(R.string.permission_shizuku_needs_permission_status)
             )
         }
 
         items.add(
             PermissionCheckItem(
                 id = "shizuku_recording",
-                title = "Shizuku 2-Way Audio",
+                title = context.getString(R.string.permission_shizuku_audio_title),
                 description = shizukuDesc,
                 icon = Icons.Outlined.GraphicEq,
                 isGranted = shizukuGranted,
                 isEssential = false,
                 actionType = PermissionActionType.SHIZUKU,
-                isEnabled = shizukuInstalled,
+                isEnabled = true,
                 actionLabel = shizukuActionLabel,
                 statusNote = shizukuStatusNote
             )

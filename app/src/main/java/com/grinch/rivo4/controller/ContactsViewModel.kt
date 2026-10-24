@@ -7,26 +7,88 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.grinch.rivo4.controller.util.PreferenceManager
 import com.grinch.rivo4.modal.data.Contact
+import com.grinch.rivo4.modal.db.TrashedContactDao
+import com.grinch.rivo4.modal.db.TrashedContactEntity
+import com.grinch.rivo4.controller.util.ContactUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.provider.ContactsContract
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import java.util.Collections
 
 class ContactsViewModel(
     private val contactsRepo: IContactsRepository,
-    private val preferenceManager: PreferenceManager
+    private val preferenceManager: PreferenceManager,
+    private val trashedContactDao: TrashedContactDao,
+    private val context: android.content.Context
 ) : ViewModel() {
+
+    private val recentlyDeletedIds = Collections.synchronizedSet(mutableSetOf<String>())
+    private var debounceJob: Job? = null
+    private var isObserverRegistered = false
+
+    private val contentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            scheduleRefresh(delayMs = 400)
+        }
+        override fun onChange(selfChange: Boolean, uri: Uri?) {
+            scheduleRefresh(delayMs = 400)
+        }
+    }
+
+    fun registerObserver() {
+        if (isObserverRegistered) return
+        try {
+            context.contentResolver.registerContentObserver(
+                ContactsContract.Contacts.CONTENT_URI,
+                true,
+                contentObserver
+            )
+            isObserverRegistered = true
+        } catch (e: Exception) {
+            // READ_CONTACTS permission might not be granted yet
+        }
+    }
+
+    fun unregisterObserver() {
+        if (!isObserverRegistered) return
+        try {
+            context.contentResolver.unregisterContentObserver(contentObserver)
+            isObserverRegistered = false
+        } catch (e: Exception) {
+        }
+    }
+
+    fun scheduleRefresh(delayMs: Long = 400) {
+        debounceJob?.cancel()
+        debounceJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(delayMs)
+            fetchContactsInternal()
+        }
+    }
 
     private val _allContacts = MutableStateFlow<List<Contact>>(emptyList())
     val allContacts: StateFlow<List<Contact>> = _allContacts.asStateFlow()
 
     private val _duplicateGroups = MutableStateFlow<List<List<Contact>>>(emptyList())
     val duplicateGroups: StateFlow<List<List<Contact>>> = _duplicateGroups.asStateFlow()
+
+    private val _trashedContacts = MutableStateFlow<List<TrashedContactEntity>>(emptyList())
+    val trashedContacts: StateFlow<List<TrashedContactEntity>> = _trashedContacts.asStateFlow()
 
     private val _isMerging = MutableStateFlow(false)
     val isMerging: StateFlow<Boolean> = _isMerging.asStateFlow()
@@ -67,7 +129,8 @@ class ContactsViewModel(
         _showPrivateOnly,
         _showLocalOnly,
         _visibleAccounts,
-        _sortOrder
+        _sortOrder,
+        _availableAccounts
     ) { args ->
         val contacts = args[0] as List<Contact>
         val account = args[1] as Account?
@@ -75,35 +138,76 @@ class ContactsViewModel(
         val localOnly = args[3] as Boolean
         val visibleAccounts = args[4] as Set<String>?
         val sortOrder = args[5] as Int
+        val availableAccountsList = args[6] as List<Account>
 
         val baseFiltered = when {
             privateOnly -> contacts.filter { it.isPrivate }
-            localOnly -> contacts.filter { it.accountName == null && it.accountType == null }
+            localOnly -> contacts.filter { !it.isPrivate && ContactUtils.isContactLocal(it, availableAccountsList) }
             account == null -> {
                 if (visibleAccounts == null) contacts
                 else contacts.filter { contact ->
-                    val key = if (contact.accountType == null && contact.accountName == null) "local|local" else "${contact.accountType}|${contact.accountName}"
-                    visibleAccounts.contains(key) || contact.isPrivate
+                    if (contact.isPrivate) {
+                        true
+                    } else {
+                        val isLocal = ContactUtils.isContactLocal(contact, availableAccountsList)
+                        val isLocalVisible = isLocal && visibleAccounts.contains("local|local")
+                        val hasVisibleAccount = contact.linkedAccounts.any { acc ->
+                            if (ContactUtils.isLocalAccount(acc.type, acc.name, availableAccountsList)) {
+                                visibleAccounts.contains("local|local")
+                            } else {
+                                visibleAccounts.contains("${acc.type}|${acc.name}")
+                            }
+                        }
+                        val isPrimaryVisible = if (contact.accountType == null || ContactUtils.isLocalAccount(contact.accountType, contact.accountName, availableAccountsList)) {
+                            visibleAccounts.contains("local|local")
+                        } else {
+                            visibleAccounts.contains("${contact.accountType}|${contact.accountName}")
+                        }
+                        isLocalVisible || hasVisibleAccount || isPrimaryVisible
+                    }
                 }
             }
-            else -> contacts.filter { it.accountName == account.name && it.accountType == account.type }
+            else -> contacts.filter { contact ->
+                (contact.accountName == account.name && contact.accountType == account.type) ||
+                        contact.linkedAccounts.any { it.name == account.name && it.type == account.type }
+            }
         }
         
         if (sortOrder == 1) {
-            baseFiltered.sortedBy { it.name.split(" ").lastOrNull()?.lowercase() ?: it.name.lowercase() }
+            baseFiltered.sortedBy { contact ->
+                val sortKey = when {
+                    !contact.familyName.isNullOrBlank() -> contact.familyName
+                    !contact.givenName.isNullOrBlank() -> contact.givenName
+                    else -> contact.name.split(" ").lastOrNull() ?: contact.name
+                }
+                ContactUtils.stripTitlePrefix(sortKey).lowercase()
+            }
         } else {
-            baseFiltered.sortedBy { it.name.lowercase() }
+            baseFiltered.sortedBy { contact ->
+                val sortKey = when {
+                    !contact.givenName.isNullOrBlank() -> contact.givenName
+                    else -> contact.name
+                }
+                ContactUtils.stripTitlePrefix(sortKey).lowercase()
+            }
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val groupedContacts = combine(filteredContacts, _sortOrder) { contacts, sortOrder ->
-        val mainGroups = contacts.groupBy {
+        val mainGroups = contacts.groupBy { contact ->
             val nameToUse = if (sortOrder == 1) {
-                it.name.split(" ").lastOrNull() ?: it.name
+                when {
+                    !contact.familyName.isNullOrBlank() -> contact.familyName
+                    !contact.givenName.isNullOrBlank() -> contact.givenName
+                    else -> contact.name.split(" ").lastOrNull() ?: contact.name
+                }
             } else {
-                it.name
+                when {
+                    !contact.givenName.isNullOrBlank() -> contact.givenName
+                    else -> contact.name
+                }
             }
-            val firstChar = nameToUse.firstOrNull()?.uppercaseChar() ?: '#'
+            val firstChar = ContactUtils.stripTitlePrefix(nameToUse).firstOrNull()?.uppercaseChar() ?: '#'
             if (firstChar.isLetter()) firstChar else '#'
         }.toMutableMap()
 
@@ -117,21 +221,68 @@ class ContactsViewModel(
         if (hashGroup != null) finalMap['#'] = hashGroup
 
         finalMap
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    val contactsByNumber: StateFlow<Map<String, Contact>> = _allContacts.map { contacts ->
+        val map = mutableMapOf<String, Contact>()
+        for (c in contacts) {
+            for (p in c.phoneNumbers) {
+                ContactUtils.getLookupKeys(p).forEach { key ->
+                    map.putIfAbsent(key, c)
+                }
+            }
+        }
+        map
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    val contactsById: StateFlow<Map<String, Contact>> = _allContacts.map { contacts ->
+        contacts.associateBy { it.id }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     init {
         fetchAccounts()
+        registerObserver()
+        fetchContacts()
+    }
+
+    fun syncFavoriteShortcuts() {
+        val favContacts = _allContacts.value.filter { it.isFavorite }
+        val order = preferenceManager.getFavoritesOrder()
+        val sortedFavs = favContacts.sortedWith(compareBy<Contact> { contact ->
+            val index = order.indexOf(contact.id)
+            if (index != -1) index else Int.MAX_VALUE
+        }.thenBy { it.name })
+        com.grinch.rivo4.controller.util.DynamicShortcutManager.updateDynamicShortcuts(context, sortedFavs)
     }
 
     fun fetchContacts() {
+        registerObserver()
+        if (_allContacts.value.isEmpty()) {
+            _isLoading.value = true
+        }
+        fetchContactsInternal()
+    }
+
+    private fun fetchContactsInternal() {
         viewModelScope.launch(Dispatchers.IO) {
-            if (_allContacts.value.isEmpty()) {
-                _isLoading.value = true
+            try {
+                val result = contactsRepo.getContacts(
+                    includePrivate = true,
+                    includeHidden = preferenceManager.isHiddenContactsVisible()
+                )
+                val filteredResult = if (recentlyDeletedIds.isEmpty()) {
+                    result
+                } else {
+                    result.filter { !recentlyDeletedIds.contains(it.id) }
+                }
+                _allContacts.value = filteredResult
+                _isLoading.value = false
+                refreshDuplicates()
+                syncFavoriteShortcuts()
+            } catch (e: Exception) {
+                _isLoading.value = false
+                android.util.Log.e("ContactsVM", "Error in fetchContactsInternal", e)
             }
-            val result = contactsRepo.getContacts(includePrivate = true, includeHidden = preferenceManager.isHiddenContactsVisible())
-            _allContacts.value = result
-            _isLoading.value = false
-            refreshDuplicates()
         }
     }
 
@@ -205,34 +356,56 @@ class ContactsViewModel(
 
     fun toggleFavorite(contact: Contact) {
         viewModelScope.launch(Dispatchers.IO) {
-            val newFavStatus = !contact.isFavorite
-            contactsRepo.toggleFavorite(contact.id, newFavStatus)
-            
-            val currentOrder = preferenceManager.getFavoritesOrder().toMutableList()
-            if (newFavStatus) {
-                if (!currentOrder.contains(contact.id)) {
-                    currentOrder.add(contact.id)
-                    preferenceManager.setFavoritesOrder(currentOrder)
+            try {
+                val newFavStatus = !contact.isFavorite
+                contactsRepo.toggleFavorite(contact.id, newFavStatus)
+                
+                val currentOrder = preferenceManager.getFavoritesOrder().toMutableList()
+                if (newFavStatus) {
+                    if (!currentOrder.contains(contact.id)) {
+                        currentOrder.add(contact.id)
+                        preferenceManager.setFavoritesOrder(currentOrder)
+                    }
+                } else {
+                    if (currentOrder.contains(contact.id)) {
+                        currentOrder.remove(contact.id)
+                        preferenceManager.setFavoritesOrder(currentOrder)
+                    }
                 }
-            } else {
-                if (currentOrder.contains(contact.id)) {
-                    currentOrder.remove(contact.id)
-                    preferenceManager.setFavoritesOrder(currentOrder)
-                }
+                
+                fetchContacts()
+            } catch (e: Exception) {
+                android.util.Log.e("ContactsVM", "Error toggling favorite", e)
             }
-            
-            fetchContacts()
         }
     }
 
-    suspend fun saveContact(contact: Contact) {
-        withContext(Dispatchers.IO) {
-            contactsRepo.saveContact(contact)
-            
-            preferenceManager.setString(PreferenceManager.KEY_LAST_USED_ACCOUNT_NAME, contact.accountName)
-            preferenceManager.setString(PreferenceManager.KEY_LAST_USED_ACCOUNT_TYPE, contact.accountType)
-            
-            fetchContacts()
+    suspend fun saveContact(contact: Contact): Boolean {
+        return withContext(Dispatchers.IO) {
+            val isNew = contact.id.isEmpty() || contact.id == "0" || contact.id == "null"
+            val (success, savedId) = contactsRepo.saveContactWithResult(contact)
+            if (success) {
+                if (!contact.isPrivate) {
+                    preferenceManager.setString(PreferenceManager.KEY_LAST_USED_ACCOUNT_NAME, contact.accountName)
+                    preferenceManager.setString(PreferenceManager.KEY_LAST_USED_ACCOUNT_TYPE, contact.accountType)
+                }
+
+                val finalId = savedId ?: contact.id
+                val updatedContact = contact.copy(id = finalId)
+
+                withContext(Dispatchers.Main) {
+                    val currentList = _allContacts.value
+                    if (isNew) {
+                        _allContacts.value = listOf(updatedContact) + currentList.filter { it.id != finalId }
+                    } else {
+                        _allContacts.value = currentList.map {
+                            if (it.id == contact.id || it.id == finalId) updatedContact else it
+                        }
+                    }
+                }
+                scheduleRefresh(delayMs = 500)
+            }
+            success
         }
     }
     
@@ -246,44 +419,145 @@ class ContactsViewModel(
         }
     }
 
-    fun deleteContact(contactId: String) {
+    fun fetchTrashedContacts() {
         viewModelScope.launch(Dispatchers.IO) {
-            contactsRepo.deleteContact(contactId)
-            
-            val currentOrder = preferenceManager.getFavoritesOrder().toMutableList()
-            if (currentOrder.contains(contactId)) {
-                currentOrder.remove(contactId)
-                preferenceManager.setFavoritesOrder(currentOrder)
-            }
-            
+            _trashedContacts.value = contactsRepo.getTrashedContacts()
+        }
+    }
+
+    fun restoreTrashedContact(localId: Long, onDone: (() -> Unit)? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            contactsRepo.restoreTrashedContact(localId)
+            _trashedContacts.value = contactsRepo.getTrashedContacts()
             fetchContacts()
+            withContext(Dispatchers.Main) {
+                onDone?.invoke()
+            }
+        }
+    }
+
+    fun permanentlyDeleteTrashedContact(localId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            contactsRepo.permanentlyDeleteTrashedContact(localId)
+            _trashedContacts.value = contactsRepo.getTrashedContacts()
+        }
+    }
+
+    fun emptyTrash(onDone: (() -> Unit)? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            contactsRepo.emptyTrash()
+            _trashedContacts.value = emptyList()
+            withContext(Dispatchers.Main) {
+                onDone?.invoke()
+            }
+        }
+    }
+
+    fun deleteContact(contactId: String) {
+        if (contactId.isBlank() || contactId == "0" || contactId == "null") {
+            android.util.Log.w("ContactsVM", "Ignored deleteContact for invalid ID: ''")
+            return
+        }
+        recentlyDeletedIds.add(contactId)
+        _allContacts.value = _allContacts.value.filter { it.id != contactId && !recentlyDeletedIds.contains(it.id) }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (preferenceManager.isContactsTrashEnabled()) {
+                    val fullContact = contactsRepo.getContactById(contactId)
+                    if (fullContact != null) {
+                        val safePhoto = if (contactsRepo is com.grinch.rivo4.modal.repository.ContactsRepository) {
+                            contactsRepo.persistPhotoLocally(fullContact.photoUri)
+                        } else {
+                            fullContact.photoUri
+                        }
+                        trashedContactDao.insert(TrashedContactEntity.fromContact(fullContact.copy(photoUri = safePhoto)))
+                    }
+                }
+                val currentOrder = preferenceManager.getFavoritesOrder().toMutableList()
+                if (currentOrder.contains(contactId)) {
+                    currentOrder.remove(contactId)
+                    preferenceManager.setFavoritesOrder(currentOrder)
+                }
+
+                contactsRepo.deleteContact(contactId)
+
+                viewModelScope.launch {
+                    delay(5000)
+                    recentlyDeletedIds.remove(contactId)
+                }
+
+                fetchTrashedContacts()
+                scheduleRefresh(delayMs = 600)
+            } catch (e: Exception) {
+                android.util.Log.e("ContactsVM", "Error deleting contact", e)
+            }
         }
     }
 
     fun deleteContacts(contactIds: List<String>) {
+        val idSet = contactIds.filter { it.isNotBlank() && it != "0" && it != "null" }.toSet()
+        if (idSet.isEmpty()) return
+        recentlyDeletedIds.addAll(idSet)
+        _allContacts.value = _allContacts.value.filter { it.id !in idSet && !recentlyDeletedIds.contains(it.id) }
+
         viewModelScope.launch(Dispatchers.IO) {
-            contactsRepo.deleteContacts(contactIds)
-            
-            val currentOrder = preferenceManager.getFavoritesOrder().toMutableList()
-            var changed = false
-            contactIds.forEach { id ->
-                if (currentOrder.contains(id)) {
-                    currentOrder.remove(id)
-                    changed = true
+            try {
+                if (preferenceManager.isContactsTrashEnabled()) {
+                    val toTrash = contactIds.mapNotNull { contactsRepo.getContactById(it) }.map { fullContact ->
+                        val safePhoto = if (contactsRepo is com.grinch.rivo4.modal.repository.ContactsRepository) {
+                            contactsRepo.persistPhotoLocally(fullContact.photoUri)
+                        } else {
+                            fullContact.photoUri
+                        }
+                        fullContact.copy(photoUri = safePhoto)
+                    }
+                    if (toTrash.isNotEmpty()) {
+                        trashedContactDao.insertAll(toTrash.map { TrashedContactEntity.fromContact(it) })
+                    }
                 }
+                contactsRepo.deleteContacts(contactIds)
+                
+                val currentOrder = preferenceManager.getFavoritesOrder().toMutableList()
+                var changed = false
+                contactIds.forEach { id ->
+                    if (currentOrder.contains(id)) {
+                        currentOrder.remove(id)
+                        changed = true
+                    }
+                }
+                if (changed) {
+                    preferenceManager.setFavoritesOrder(currentOrder)
+                }
+
+                viewModelScope.launch {
+                    delay(5000)
+                    recentlyDeletedIds.removeAll(idSet)
+                }
+
+                fetchTrashedContacts()
+                scheduleRefresh(delayMs = 600)
+            } catch (e: Exception) {
+                android.util.Log.e("ContactsVM", "Error deleting contacts", e)
             }
-            if (changed) {
-                preferenceManager.setFavoritesOrder(currentOrder)
-            }
-            
-            fetchContacts()
         }
     }
 
     fun moveContacts(contactIds: List<String>, account: Account?) {
+        val idSet = contactIds.toSet()
+        val isPrivateMove = account?.type == "com.grinch.rivo4.private" || account?.name == "private"
+        _allContacts.value = _allContacts.value.map { contact ->
+            if (contact.id in idSet) {
+                if (isPrivateMove) {
+                    contact.copy(isPrivate = true, accountName = null, accountType = null)
+                } else {
+                    contact.copy(accountName = account?.name, accountType = account?.type, isPrivate = false)
+                }
+            } else contact
+        }
         viewModelScope.launch(Dispatchers.IO) {
             contactsRepo.moveContacts(contactIds, account?.name, account?.type)
-            fetchContacts()
+            scheduleRefresh(delayMs = 600)
         }
     }
 
@@ -299,9 +573,14 @@ class ContactsViewModel(
     fun mergeContacts(targetId: String, sourceIds: List<String>) {
         viewModelScope.launch(Dispatchers.IO) {
             _isMerging.value = true
-            contactsRepo.mergeContacts(targetId, sourceIds)
-            fetchContacts()
-            _isMerging.value = false
+            try {
+                contactsRepo.mergeContacts(targetId, sourceIds)
+                fetchContacts()
+            } catch (e: Exception) {
+                android.util.Log.e("ContactsVM", "Error merging contacts", e)
+            } finally {
+                _isMerging.value = false
+            }
         }
     }
 
@@ -312,16 +591,28 @@ class ContactsViewModel(
     fun mergeAllDuplicates() {
         viewModelScope.launch(Dispatchers.IO) {
             _isMerging.value = true
-            val currentDupes = contactsRepo.findDuplicates()
-            currentDupes.forEach { group ->
-                if (group.size > 1) {
-                    val primary = group.first()
-                    val sources = group.drop(1).map { it.id }
-                    contactsRepo.mergeContacts(primary.id, sources)
+            try {
+                val currentDupes = contactsRepo.findDuplicates()
+                for (group in currentDupes) {
+                    if (!isActive) break
+                    if (group.size > 1) {
+                        try {
+                            val primary = group.first()
+                            val sources = group.drop(1).map { it.id }
+                            contactsRepo.mergeContacts(primary.id, sources)
+                        } catch (e: Exception) {
+                            android.util.Log.e("ContactsVM", "Error merging group", e)
+                        }
+                        kotlinx.coroutines.delay(40)
+                    }
                 }
+                _duplicateGroups.value = emptyList()
+                fetchContacts()
+            } catch (e: Exception) {
+                android.util.Log.e("ContactsVM", "Error merging all duplicates", e)
+            } finally {
+                _isMerging.value = false
             }
-            fetchContacts()
-            _isMerging.value = false
         }
     }
 
@@ -362,16 +653,22 @@ class ContactsViewModel(
     }
 
     fun makeContactPrivate(contactId: String) {
+        _allContacts.value = _allContacts.value.map {
+            if (it.id == contactId) it.copy(isPrivate = true) else it
+        }
         viewModelScope.launch(Dispatchers.IO) {
             contactsRepo.makeContactPrivate(contactId)
-            fetchContacts()
+            scheduleRefresh(delayMs = 500)
         }
     }
 
     fun makeContactPublic(contactId: String) {
+        _allContacts.value = _allContacts.value.map {
+            if (it.id == contactId) it.copy(isPrivate = false) else it
+        }
         viewModelScope.launch(Dispatchers.IO) {
             contactsRepo.makeContactPublic(contactId)
-            fetchContacts()
+            scheduleRefresh(delayMs = 500)
         }
     }
 
@@ -405,5 +702,11 @@ class ContactsViewModel(
             contactsRepo.setContactHidden(contactId, isHidden)
             fetchContacts()
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        debounceJob?.cancel()
+        unregisterObserver()
     }
 }

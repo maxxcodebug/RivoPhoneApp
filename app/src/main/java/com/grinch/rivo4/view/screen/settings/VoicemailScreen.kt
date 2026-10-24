@@ -1,4 +1,5 @@
 package com.grinch.rivo4.view.screen.settings
+import com.grinch.rivo4.view.components.MenuTopAppBar
 
 import android.content.Intent
 import android.media.RingtoneManager
@@ -28,6 +29,7 @@ import com.grinch.rivo4.controller.util.PreferenceManager
 import com.grinch.rivo4.controller.util.getSystemVoicemailNumber
 import com.grinch.rivo4.controller.util.makeCall
 import com.grinch.rivo4.view.components.RivoExpressiveCard
+import com.grinch.rivo4.view.components.RivoExpressiveGroup
 import com.grinch.rivo4.view.components.RivoListItem
 import com.grinch.rivo4.view.components.RivoSwitchListItem
 import com.ramcosta.composedestinations.annotation.Destination
@@ -86,115 +88,114 @@ fun VoicemailScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.settings_voicemail_title), fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = { navigator.navigateUp() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                    }
-                }
+            MenuTopAppBar(
+                text = stringResource(R.string.settings_voicemail_title),
+                navigator = navigator
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             item {
-                RivoExpressiveCard(
+                RivoExpressiveGroup(
                     title = stringResource(R.string.settings_voicemail_carrier_settings),
                     icon = Icons.Outlined.Settings
                 ) {
-                    OutlinedTextField(
-                        value = voicemailNumber,
-                        onValueChange = {
-                            voicemailNumber = it
-                            prefs.setString(PreferenceManager.KEY_VOICEMAIL_NUMBER, it)
-                        },
-                        label = { Text(stringResource(R.string.settings_voicemail_number)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = MaterialTheme.shapes.medium,
-                        trailingIcon = {
-                            IconButton(onClick = {
-                                val detected = getSystemVoicemailNumber(context)
-                                if (!detected.isNullOrEmpty()) {
-                                    voicemailNumber = detected
-                                    prefs.setString(PreferenceManager.KEY_VOICEMAIL_NUMBER, detected)
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = voicemailNumber,
+                                onValueChange = {
+                                    voicemailNumber = it
+                                    prefs.setString(PreferenceManager.KEY_VOICEMAIL_NUMBER, it)
+                                },
+                                label = { Text(stringResource(R.string.settings_voicemail_number)) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                shape = MaterialTheme.shapes.medium,
+                                trailingIcon = {
+                                    IconButton(onClick = {
+                                        val detected = getSystemVoicemailNumber(context)
+                                        if (!detected.isNullOrEmpty()) {
+                                            voicemailNumber = detected
+                                            prefs.setString(PreferenceManager.KEY_VOICEMAIL_NUMBER, detected)
+                                        }
+                                    }) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.SimCard,
+                                            contentDescription = stringResource(R.string.content_desc_auto_detect_sim)
+                                        )
+                                    }
                                 }
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Outlined.SimCard,
-                                    contentDescription = stringResource(R.string.content_desc_auto_detect_sim)
-                                )
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = stringResource(R.string.settings_voicemail_number_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    item {
+                        RivoListItem(
+                            headline = stringResource(R.string.settings_voicemail_call_voicemail),
+                            supporting = stringResource(R.string.settings_voicemail_call_voicemail_supporting),
+                            leadingIcon = Icons.Outlined.Voicemail,
+                            onClick = {
+                                val num = voicemailNumber.ifEmpty { "voicemail:" }
+                                makeCall(context, num)
                             }
-                        }
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = stringResource(R.string.settings_voicemail_number_hint),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    RivoListItem(
-                        headline = stringResource(R.string.settings_voicemail_call_voicemail),
-                        supporting = stringResource(R.string.settings_voicemail_call_voicemail_supporting),
-                        leadingIcon = Icons.Outlined.Voicemail,
-                        onClick = {
-                            val num = voicemailNumber.ifEmpty { "voicemail:" }
-                            makeCall(context, num)
-                        }
-                    )
+                        )
+                    }
                 }
             }
 
             item {
                 val selectVoicemailNotificationLabel = stringResource(R.string.settings_voicemail_select_notification_ringtone)
-                RivoExpressiveCard(
+                RivoExpressiveGroup(
                     title = stringResource(R.string.settings_voicemail_notifications_header),
                     icon = Icons.Outlined.Notifications
                 ) {
-                    RivoListItem(
-                        headline = stringResource(R.string.settings_voicemail_ringtone),
-                        supporting = currentRingtoneName,
-                        leadingIcon = Icons.Outlined.Notifications,
-                        onClick = {
-                            val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
-                                putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_NOTIFICATION)
-                                putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, selectVoicemailNotificationLabel)
-                                putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, ringtoneUri?.let { Uri.parse(it) })
+                    item {
+                        RivoListItem(
+                            headline = stringResource(R.string.settings_voicemail_ringtone),
+                            supporting = currentRingtoneName,
+                            leadingIcon = Icons.Outlined.Notifications,
+                            onClick = {
+                                val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                                    putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_NOTIFICATION)
+                                    putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, selectVoicemailNotificationLabel)
+                                    putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, ringtoneUri?.let { Uri.parse(it) })
+                                }
+                                ringtonePickerLauncher.launch(intent)
                             }
-                            ringtonePickerLauncher.launch(intent)
-                        }
-                    )
-
-                    HorizontalDivider(
-                        Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
-
-                    RivoSwitchListItem(
-                        headline = stringResource(R.string.settings_voicemail_vibration),
-                        supporting = stringResource(R.string.settings_voicemail_vibration_supporting),
-                        leadingIcon = Icons.Outlined.Vibration,
-                        checked = vibrationEnabled,
-                        onCheckedChange = {
-                            vibrationEnabled = it
-                            prefs.setBoolean(PreferenceManager.KEY_VOICEMAIL_VIBRATION, it)
-                        }
-                    )
+                        )
+                    }
+                    item {
+                        RivoSwitchListItem(
+                            headline = stringResource(R.string.settings_voicemail_vibration),
+                            supporting = stringResource(R.string.settings_voicemail_vibration_supporting),
+                            leadingIcon = Icons.Outlined.Vibration,
+                            checked = vibrationEnabled,
+                            onCheckedChange = {
+                                vibrationEnabled = it
+                                prefs.setBoolean(PreferenceManager.KEY_VOICEMAIL_VIBRATION, it)
+                            }
+                        )
+                    }
                 }
             }
 
@@ -204,15 +205,15 @@ fun VoicemailScreen(
                     icon = Icons.Outlined.Voicemail
                 ) {
                     Text(
-                        stringResource(R.string.settings_voicemail_visual_description),
+                        text = stringResource(R.string.settings_voicemail_visual_description),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp)
                     )
                 }
             }
 
             item {
-                com.grinch.rivo4.view.components.ad.BannerAd()
             }
         }
     }

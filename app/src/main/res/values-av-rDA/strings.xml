@@ -50,4 +50,29 @@
     <!-- Missed Call Card & Auto Decline -->
     <!-- Favorites Modernization -->
     <!-- Dual SIM Buttons -->
+    <!-- Call Log Limit (#161) -->
+    <!-- Auto Paste Clipboard (#168) -->
+    <!-- Separate Contacts Home Screen Icon (#167) -->
+    <!-- Call Waiting Carrier Settings (#62) -->
+    <!-- Call Analytics & Tracking -->
+    <!-- Dual SIM per Contact -->
+    <!-- Call Recording Custom Save Folder -->
+    <!-- Do Not Disturb during calls -->
+    <!-- Unknown Call Background & Image Preview Strings -->
+    <!-- Call Types & Relative Dates -->
+    <!-- Priority Contacts -->
+    <!-- Settings Expressive Groups & Titles -->
+    <!-- Multi-call & Conference Management -->
+    <!-- Carrier in Recents -->
+    <!-- Standardized Phone Number Formatting & Country Code -->
+    <!-- Avatar Cropping -->
+    <!-- Floating Call Bubble -->
+    <!-- Additional Call Log & Reminder Strings -->
+    <!-- Predictive Back Gestures -->
+    <!-- Open Call Screen on Answer -->
+    <!-- Theme mode & dynamic palettes -->
+    <!-- Typography -->
+    <!-- Avatar preview -->
+    <!-- Call screen customization -->
+    <!-- Support Development & Video Ads -->
 </resources>

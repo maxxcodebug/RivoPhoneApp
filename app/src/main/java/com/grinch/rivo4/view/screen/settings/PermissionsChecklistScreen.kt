@@ -1,4 +1,5 @@
 package com.grinch.rivo4.view.screen.settings
+import com.grinch.rivo4.view.components.MenuTopAppBar
 
 import android.Manifest
 import android.content.Intent
@@ -7,37 +8,50 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.icons.outlined.GraphicEq
-import com.grinch.rivo4.controller.shizuku.ShizukuConnectionManager
-import rikka.shizuku.Shizuku
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Shop
+import androidx.compose.material.icons.outlined.Stars
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.grinch.rivo4.R
 import com.grinch.rivo4.controller.permission.PermissionActionType
 import com.grinch.rivo4.controller.permission.PermissionCheckItem
 import com.grinch.rivo4.controller.permission.PermissionChecklistHelper
+import com.grinch.rivo4.controller.shizuku.ShizukuConnectionManager
 import com.grinch.rivo4.controller.util.getDefaultDialerIntent
+import com.grinch.rivo4.view.components.RivoDialog
+import com.grinch.rivo4.view.components.RivoDialogAction
 import com.grinch.rivo4.view.components.RivoExpressiveCard
 import com.grinch.rivo4.view.components.RivoListItem
+import com.grinch.rivo4.view.components.RivoSectionHeader
 import com.grinch.rivo4.view.screen.onboarding.PermissionsChecklistCard
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import rikka.shizuku.Shizuku
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
@@ -63,22 +77,39 @@ fun PermissionsChecklistScreen(
     }
 
     DisposableEffect(Unit) {
-        val listener = Shizuku.OnRequestPermissionResultListener { _, _ ->
+        val listener = Shizuku.OnBinderReceivedListener {
             refreshTrigger++
         }
+        val deadListener = Shizuku.OnBinderDeadListener {
+            refreshTrigger++
+        }
+        val permissionListener = object : Shizuku.OnRequestPermissionResultListener {
+            override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
+                refreshTrigger++
+            }
+        }
         try {
-            Shizuku.addRequestPermissionResultListener(listener)
-        } catch (_: Exception) {}
+            Shizuku.addBinderReceivedListener(listener)
+            Shizuku.addBinderDeadListener(deadListener)
+            Shizuku.addRequestPermissionResultListener(permissionListener)
+        } catch (e: Exception) {
+            // Ignore if Shizuku not installed
+        }
         onDispose {
             try {
-                Shizuku.removeRequestPermissionResultListener(listener)
-            } catch (_: Exception) {}
+                Shizuku.removeBinderReceivedListener(listener)
+                Shizuku.removeBinderDeadListener(deadListener)
+                Shizuku.removeRequestPermissionResultListener(permissionListener)
+            } catch (e: Exception) {
+                // Ignore
+            }
         }
     }
 
     val essentialItems = remember(refreshTrigger) {
         PermissionChecklistHelper.getEssentialItems(context)
     }
+
     val recommendedItems = remember(refreshTrigger) {
         PermissionChecklistHelper.getRecommendedItems(context)
     }
@@ -119,10 +150,19 @@ fun PermissionsChecklistScreen(
                 settingsLauncher.launch(PermissionChecklistHelper.getBatteryOptimizationIntent(context))
             }
             PermissionActionType.SETTINGS -> {
-                if (item.id == "vivo_background_popup") {
-                    com.grinch.rivo4.controller.util.OemPermissionHelper.openBackgroundPopupPermission(context)
-                } else {
-                    settingsLauncher.launch(PermissionChecklistHelper.getAppSettingsIntent(context))
+                when (item.id) {
+                    "xiaomi_lockscreen", "xiaomi_background_popup" -> {
+                        com.grinch.rivo4.controller.util.OemPermissionHelper.openXiaomiLockscreenSettings(context)
+                    }
+                    "oem_autostart" -> {
+                        com.grinch.rivo4.controller.util.OemPermissionHelper.openAutostartSettings(context)
+                    }
+                    "vivo_background_popup", "oem_lockscreen_popup" -> {
+                        com.grinch.rivo4.controller.util.OemPermissionHelper.openBackgroundPopupPermission(context)
+                    }
+                    else -> {
+                        settingsLauncher.launch(PermissionChecklistHelper.getAppSettingsIntent(context))
+                    }
                 }
             }
             PermissionActionType.RUNTIME -> {
@@ -157,39 +197,29 @@ fun PermissionsChecklistScreen(
     }
 
     if (showShizukuInstallDialog) {
-        AlertDialog(
+        RivoDialog(
             onDismissRequest = { showShizukuInstallDialog = false },
-            icon = {
-                Icon(
-                    imageVector = Icons.Outlined.GraphicEq,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            },
-            title = {
+            title = stringResource(R.string.install_shizuku_title),
+            icon = Icons.Outlined.GraphicEq,
+            dismissAction = RivoDialogAction(
+                label = stringResource(R.string.action_cancel),
+                onClick = { showShizukuInstallDialog = false }
+            )
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(
-                    text = "Install Shizuku",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
+                    text = "Shizuku enables crystal-clear 2-way call audio capture directly from Android system audio without rooting your device.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            },
-            text = {
-                Column {
-                    Text(
-                        text = "Shizuku enables crystal-clear 2-way call audio capture directly from Android system audio without rooting your device.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        text = "Select an installation source:",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
+                Text(
+                    text = "Select an installation source:",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Surface(
                     onClick = {
                         showShizukuInstallDialog = false
                         try {
@@ -203,53 +233,81 @@ fun PermissionsChecklistScreen(
                             }
                             context.startActivity(webIntent)
                         }
-                    }
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Google Play")
-                }
-            },
-            dismissButton = {
-                Row {
-                    OutlinedButton(
-                        onClick = {
-                            showShizukuInstallDialog = false
-                            val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/")).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(webIntent)
-                        }
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Website / APK")
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Outlined.Shop, contentDescription = null, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.shizuku_google_play), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.shizuku_recommended_updates), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                        }
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    TextButton(onClick = { showShizukuInstallDialog = false }) {
-                        Text("Cancel")
+                }
+
+                Surface(
+                    onClick = {
+                        showShizukuInstallDialog = false
+                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/")).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(webIntent)
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Outlined.Language, contentDescription = null, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.shizuku_official_website), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.shizuku_download_directly), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
                     }
                 }
             }
-        )
+        }
     }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Permissions & App Setup",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = { navigator.navigateUp() }) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                }
+            MenuTopAppBar(
+                text = stringResource(R.string.settings_permissions_app_setup_title),
+                navigator = navigator
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
@@ -276,13 +334,13 @@ fun PermissionsChecklistScreen(
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
                             Text(
-                                text = "System Permissions Overview",
+                                text = stringResource(R.string.settings_permissions_overview_title),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Manage runtime permissions and system integrations required for seamless calling.",
+                                text = stringResource(R.string.settings_permissions_overview_desc),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -292,12 +350,10 @@ fun PermissionsChecklistScreen(
             }
 
             item {
-                Text(
-                    text = "Essential Permissions",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(start = 8.dp, top = 8.dp)
+                RivoSectionHeader(
+                    title = stringResource(R.string.settings_permissions_essential_title),
+                    icon = Icons.Outlined.Shield,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
                 )
             }
 
@@ -309,12 +365,10 @@ fun PermissionsChecklistScreen(
             }
 
             item {
-                Text(
-                    text = "Recommended & Advanced Features",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(start = 8.dp, top = 8.dp)
+                RivoSectionHeader(
+                    title = stringResource(R.string.settings_permissions_recommended_title),
+                    icon = Icons.Outlined.Stars,
+                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
                 )
             }
 
@@ -326,10 +380,22 @@ fun PermissionsChecklistScreen(
             }
 
             item {
-                RivoExpressiveCard {
+                RivoSectionHeader(
+                    title = stringResource(R.string.settings_permissions_system_title),
+                    icon = Icons.Outlined.Settings,
+                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+                )
+            }
+
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow
+                ) {
                     RivoListItem(
-                        headline = "Open App System Settings",
-                        supporting = "View and manage permissions directly in Android device settings",
+                        headline = stringResource(R.string.settings_open_system),
+                        supporting = stringResource(R.string.settings_open_system_supporting),
                         leadingIcon = Icons.AutoMirrored.Outlined.OpenInNew,
                         onClick = {
                             context.startActivity(PermissionChecklistHelper.getAppSettingsIntent(context))

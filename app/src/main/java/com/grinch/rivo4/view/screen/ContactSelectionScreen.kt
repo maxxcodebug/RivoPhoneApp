@@ -1,18 +1,20 @@
 package com.grinch.rivo4.view.screen
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -21,26 +23,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.grinch.rivo4.R
 import com.grinch.rivo4.controller.ContactsViewModel
 import com.grinch.rivo4.controller.util.formatPhoneNumber
+import com.grinch.rivo4.controller.util.ContactUtils
 import com.grinch.rivo4.modal.data.Contact
-import com.grinch.rivo4.view.theme.LocalCardRoundness
-import com.grinch.rivo4.view.components.NumberPickerDialog
-import com.grinch.rivo4.view.components.RivoAvatar
-import com.grinch.rivo4.view.components.RivoExpressiveCard
-import com.grinch.rivo4.view.components.RivoFilterChip
-import com.grinch.rivo4.view.components.RivoLoadingIndicatorView
-import com.grinch.rivo4.view.theme.RivoMaterialShapes
-import com.grinch.rivo4.view.theme.RivoShapeDefaults
-import com.grinch.rivo4.view.theme.rememberRivoMorphShape
-import com.grinch.rivo4.view.theme.rivoCornerDp
+import com.grinch.rivo4.view.components.*
+import com.grinch.rivo4.view.theme.*
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.generated.destinations.ContactEditScreenDestination
+import com.ramcosta.composedestinations.generated.destinations.ContactSelectionScreenDestination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import com.ramcosta.composedestinations.result.ResultBackNavigator
 import org.koin.compose.viewmodel.koinActivityViewModel
@@ -51,15 +49,20 @@ import org.koin.compose.viewmodel.koinActivityViewModel
 fun ContactSelectionScreen(
     navigator: DestinationsNavigator,
     resultNavigator: ResultBackNavigator<String>,
-    title: String = "Select Contact",
+    title: String? = null,
     isMultiSelect: Boolean = false,
     actionButtonText: String = "Select",
-    returnContactId: Boolean = false
+    returnContactId: Boolean = false,
+    initialPhoneToAssign: String? = null
 ) {
+    val screenTitle = title ?: stringResource(R.string.search_contacts_title)
+    val view = LocalView.current
     val viewModel: ContactsViewModel = koinActivityViewModel()
     val allContacts by viewModel.allContacts.collectAsState()
+    val displayOrder by viewModel.displayOrder.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val roundness = LocalCardRoundness.current
+    val avatarStyle = rememberRivoAvatarStyle()
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilterTab by remember { mutableIntStateOf(0) }
@@ -67,367 +70,586 @@ fun ContactSelectionScreen(
     var selectedPhoneNumbers by remember { mutableStateOf(setOf<String>()) }
     var pendingMultiNumberContact by remember { mutableStateOf<Contact?>(null) }
 
-    val heroCornerDp = rivoCornerDp(RivoShapeDefaults.BaseExtraLarge, roundness)
-    val itemCornerDp = rivoCornerDp(RivoShapeDefaults.BaseLarge, roundness)
-    val logoMorph = rememberRivoMorphShape(RivoMaterialShapes.Cookie12Sided, RivoMaterialShapes.Circle) { 0.25f }
-
     LaunchedEffect(Unit) {
         viewModel.fetchContacts()
     }
 
-    val filteredContacts = remember(allContacts, searchQuery, selectedFilterTab) {
+    val filteredContacts = remember(allContacts, searchQuery, selectedFilterTab, displayOrder) {
         var list = when (selectedFilterTab) {
             1 -> allContacts.filter { it.isFavorite }
             2 -> allContacts.filter { it.isPrivate }
             else -> allContacts
         }
         if (searchQuery.isNotBlank()) {
+            val cleanSearch = searchQuery.trim()
             list = list.filter {
-                it.name.contains(searchQuery, ignoreCase = true) ||
-                it.phoneNumbers.any { num -> num.contains(searchQuery) }
+                it.name.contains(cleanSearch, ignoreCase = true) ||
+                ContactUtils.formatContactName(it, displayOrder).contains(cleanSearch, ignoreCase = true) ||
+                it.phoneNumbers.any { num -> num.contains(cleanSearch) }
             }
         }
-        list.sortedBy { it.name.lowercase() }
+        list.sortedWith { c1, c2 -> ContactUtils.compareContacts(c1, c2, displayOrder) }
     }
 
-    val groupedContacts = remember(filteredContacts) {
+    val groupedContacts = remember(filteredContacts, displayOrder) {
         filteredContacts.groupBy { contact ->
-            val first = contact.name.trim().firstOrNull()?.uppercaseChar() ?: '#'
-            if (first in 'A'..'Z') first.toString() else "#"
+            ContactUtils.getContactInitial(contact, displayOrder)
         }
     }
 
-    val totalSelectedCount = maxOf(selectedContactIds.size, selectedPhoneNumbers.size)
+    val totalSelectedCount = if (returnContactId) selectedContactIds.size else selectedPhoneNumbers.size
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = if (isMultiSelect && totalSelectedCount > 0) {
-                            "$totalSelectedCount selected"
-                        } else {
-                            title
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = { navigator.navigateUp() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { navigator.navigate(ContactEditScreenDestination()) }) {
-                        Icon(Icons.Outlined.PersonAdd, contentDescription = "Create New Contact")
-                    }
-                    if (isMultiSelect && totalSelectedCount > 0) {
-                        IconButton(onClick = {
-                            selectedContactIds = emptySet()
-                            selectedPhoneNumbers = emptySet()
-                        }) {
-                            Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.action_cancel))
-                        }
-                    }
-                }
-            )
-        },
-        floatingActionButton = {
-            if (isMultiSelect && totalSelectedCount > 0) {
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        val csvResult = if (returnContactId) {
-                            selectedContactIds.joinToString(",")
-                        } else {
-                            selectedPhoneNumbers.joinToString(",")
-                        }
-                        resultNavigator.navigateBack(result = csvResult)
-                    },
-                    icon = { Icon(Icons.Default.Check, contentDescription = null) },
-                    text = { Text("$actionButtonText ($totalSelectedCount)", fontWeight = FontWeight.Bold) },
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            }
-        }
-    ) { padding ->
-        if (isLoading) {
-            RivoLoadingIndicatorView(modifier = Modifier.fillMaxSize())
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                item {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(heroCornerDp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Surface(
-                                    modifier = Modifier.size(52.dp),
-                                    shape = logoMorph,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            Icons.Outlined.Contacts,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(26.dp)
-                                        )
-                                    }
-                                }
-                                Spacer(Modifier.width(16.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = title,
-                                        style = MaterialTheme.typography.titleLarge,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        text = "${allContacts.size} contacts available • Tap to select or enter custom number",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(14.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Button(
-                                    onClick = { navigator.navigate(ContactEditScreenDestination()) },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(itemCornerDp)
-                                ) {
-                                    Icon(Icons.Outlined.PersonAdd, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Create Contact", fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                item {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text(stringResource(R.string.search_contacts_placeholder)) },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Clear, contentDescription = null)
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(heroCornerDp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                        )
-                    )
-                }
-
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        RivoFilterChip(
-                            label = "All (${allContacts.size})",
-                            selected = selectedFilterTab == 0,
-                            onClick = { selectedFilterTab = 0 },
-                            leadingIcon = { Icon(Icons.Outlined.People, contentDescription = null) }
-                        )
-                        RivoFilterChip(
-                            label = "Favorites",
-                            selected = selectedFilterTab == 1,
-                            onClick = { selectedFilterTab = 1 },
-                            leadingIcon = { Icon(Icons.Outlined.Star, contentDescription = null) }
-                        )
-                        RivoFilterChip(
-                            label = "Private",
-                            selected = selectedFilterTab == 2,
-                            onClick = { selectedFilterTab = 2 },
-                            leadingIcon = { Icon(Icons.Outlined.Lock, contentDescription = null) }
-                        )
-                    }
-                }
-
-                val cleanQuery = searchQuery.trim()
-                val isPhoneQuery = cleanQuery.any { it.isDigit() } || cleanQuery.startsWith("+")
-
-                if (isPhoneQuery) {
-                    item {
-                        val isCustomSelected = selectedPhoneNumbers.contains(cleanQuery)
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(itemCornerDp))
-                                .clickable {
-                                    if (isMultiSelect) {
-                                        selectedPhoneNumbers = if (isCustomSelected) {
-                                            selectedPhoneNumbers - cleanQuery
-                                        } else {
-                                            selectedPhoneNumbers + cleanQuery
-                                        }
-                                    } else {
-                                        resultNavigator.navigateBack(result = cleanQuery)
-                                    }
-                                },
-                            shape = RoundedCornerShape(itemCornerDp),
-                            color = if (isCustomSelected) {
-                                MaterialTheme.colorScheme.primaryContainer
+    CompositionLocalProvider(LocalRivoAvatarStyle provides avatarStyle) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = if (isMultiSelect && totalSelectedCount > 0) {
+                                "$totalSelectedCount selected"
                             } else {
-                                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                                screenTitle
                             },
-                            border = if (isCustomSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 6.dp)
+                        )
+                    },
+                    navigationIcon = {
+                        Surface(
+                            onClick = { navigator.navigateUp() },
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(start = 12.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.size(40.dp)
                             ) {
-                                if (isMultiSelect) {
-                                    Checkbox(
-                                        checked = isCustomSelected,
-                                        onCheckedChange = { checked ->
-                                            selectedPhoneNumbers = if (checked) {
-                                                selectedPhoneNumbers + cleanQuery
-                                            } else {
-                                                selectedPhoneNumbers - cleanQuery
-                                            }
-                                        },
-                                        modifier = Modifier.padding(end = 8.dp)
-                                    )
-                                }
-                                Surface(
-                                    modifier = Modifier.size(46.dp),
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Outlined.Dialpad, contentDescription = null, modifier = Modifier.size(22.dp))
-                                    }
-                                }
-                                Spacer(Modifier.width(16.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Use number: $cleanQuery",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        text = "Tap to select this custom number",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = stringResource(R.string.action_back),
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
                         }
-                    }
-                }
-
-                if (filteredContacts.isEmpty() && !isPhoneQuery) {
-                    item {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 32.dp),
-                            shape = RoundedCornerShape(heroCornerDp),
-                            color = MaterialTheme.colorScheme.surfaceContainerLow
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(32.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Surface(
-                                    modifier = Modifier.size(64.dp),
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.surfaceContainerHighest
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            Icons.Outlined.PersonSearch,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(32.dp)
-                                        )
+                    },
+                    actions = {
+                        if (isMultiSelect) {
+                            val allSelected = filteredContacts.isNotEmpty() && filteredContacts.all {
+                                if (returnContactId) selectedContactIds.contains(it.id)
+                                else it.phoneNumbers.any { num -> selectedPhoneNumbers.contains(num) }
+                            }
+                            TextButton(
+                                onClick = {
+                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                    if (allSelected) {
+                                        val idsToRemove = filteredContacts.map { it.id }.toSet()
+                                        val numsToRemove = filteredContacts.flatMap { it.phoneNumbers }.toSet()
+                                        selectedContactIds = selectedContactIds - idsToRemove
+                                        selectedPhoneNumbers = selectedPhoneNumbers - numsToRemove
+                                    } else {
+                                        selectedContactIds = selectedContactIds + filteredContacts.map { it.id }.toSet()
+                                        selectedPhoneNumbers = selectedPhoneNumbers + filteredContacts.flatMap { it.phoneNumbers }.toSet()
                                     }
                                 }
-                                Spacer(Modifier.height(16.dp))
+                            ) {
                                 Text(
-                                    text = stringResource(R.string.search_no_results_title),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
+                                    text = if (allSelected) "Deselect All" else "Select All",
+                                    fontWeight = FontWeight.SemiBold
                                 )
-                                Spacer(Modifier.height(4.dp))
+                            }
+                        }
+                        RivoTopBarIconButton(
+                            onClick = { navigator.navigate(ContactEditScreenDestination(initialPhone = initialPhoneToAssign)) },
+                            icon = Icons.Outlined.PersonAdd,
+                            contentDescription = stringResource(R.string.contact_create_new)
+                        )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
+                    )
+                )
+            },
+            bottomBar = {
+                AnimatedVisibility(
+                    visible = isMultiSelect && totalSelectedCount > 0,
+                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        shape = RoundedCornerShape(rivoCornerDp(24, roundness)),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shadowElevation = 8.dp
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = stringResource(R.string.search_no_results_hint),
+                                    text = "$totalSelectedCount selected",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Ready to proceed",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                        selectedContactIds = emptySet()
+                                        selectedPhoneNumbers = emptySet()
+                                    }
+                                ) {
+                                    Text(stringResource(R.string.action_clear_short))
+                                }
+                                Button(
+                                    onClick = {
+                                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                        val csvResult = if (returnContactId) {
+                                            selectedContactIds.joinToString(",")
+                                        } else {
+                                            selectedPhoneNumbers.joinToString(",")
+                                        }
+                                        resultNavigator.navigateBack(result = csvResult)
+                                    },
+                                    shape = RoundedCornerShape(rivoCornerDp(16, roundness)),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = "$actionButtonText ($totalSelectedCount)",
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
                     }
-                } else {
-                    groupedContacts.forEach { (initial, contactsInGroup) ->
-                        item(key = "header_$initial") {
-                            Text(
-                                text = initial,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 4.dp)
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) { padding ->
+            if (isLoading && allContacts.isEmpty()) {
+                RivoLoadingIndicatorView(modifier = Modifier.fillMaxSize())
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = if (isMultiSelect && totalSelectedCount > 0) 100.dp else 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    // Modern Hero Card
+                    item(key = "hero_overview") {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 10.dp),
+                            shape = RoundedCornerShape(rivoCornerDp(24, roundness)),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow
+                        ) {
+                            Column(modifier = Modifier.padding(18.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Surface(
+                                        modifier = Modifier.size(48.dp),
+                                        shape = RoundedCornerShape(rivoCornerDp(14, roundness)),
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = if (initialPhoneToAssign != null) Icons.Outlined.PersonSearch else Icons.Outlined.Contacts,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.width(16.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = screenTitle,
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        if (initialPhoneToAssign != null) {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                                contentColor = MaterialTheme.colorScheme.primary
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Outlined.Phone,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(13.dp)
+                                                    )
+                                                    Spacer(Modifier.width(6.dp))
+                                                    Text(
+                                                        text = formatPhoneNumber(initialPhoneToAssign),
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            Text(
+                                                text = "${allContacts.size} contacts available",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (initialPhoneToAssign != null) {
+                                    Spacer(Modifier.height(14.dp))
+                                    FilledTonalButton(
+                                        onClick = {
+                                            navigator.navigate(ContactEditScreenDestination(initialPhone = initialPhoneToAssign))
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(rivoCornerDp(16, roundness)),
+                                        colors = ButtonDefaults.filledTonalButtonColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                            contentColor = MaterialTheme.colorScheme.primary
+                                        )
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.PersonAdd,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = stringResource(R.string.contact_create_new),
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Modern Search Field Pill
+                    item(key = "search_bar") {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp),
+                            shape = RoundedCornerShape(rivoCornerDp(20, roundness)),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh
+                        ) {
+                            TextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                placeholder = {
+                                    Text(
+                                        stringResource(R.string.search_contacts_placeholder),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Search,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                trailingIcon = {
+                                    if (searchQuery.isNotEmpty()) {
+                                        IconButton(onClick = { searchQuery = "" }) {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = stringResource(R.string.action_clear),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                },
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    disabledContainerColor = Color.Transparent,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent
+                                ),
+                                singleLine = true
                             )
                         }
+                    }
 
-                        items(contactsInGroup, key = { it.id }) { contact ->
-                            val primaryNumber = contact.phoneNumbers.firstOrNull() ?: ""
-                            val isSelected = if (isMultiSelect) {
-                                selectedContactIds.contains(contact.id) || selectedPhoneNumbers.contains(primaryNumber)
-                            } else {
-                                false
+                    // Filter Chips Row
+                    item(key = "filter_chips") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 10.dp)
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            RivoFilterChip(
+                                label = "All (${allContacts.size})",
+                                selected = selectedFilterTab == 0,
+                                onClick = { selectedFilterTab = 0 },
+                                leadingIcon = { Icon(Icons.Outlined.People, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            )
+                            val favCount = remember(allContacts) { allContacts.count { it.isFavorite } }
+                            RivoFilterChip(
+                                label = "Favorites ($favCount)",
+                                selected = selectedFilterTab == 1,
+                                onClick = { selectedFilterTab = 1 },
+                                leadingIcon = { Icon(Icons.Outlined.Star, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            )
+                            val privCount = remember(allContacts) { allContacts.count { it.isPrivate } }
+                            if (privCount > 0) {
+                                RivoFilterChip(
+                                    label = "Private ($privCount)",
+                                    selected = selectedFilterTab == 2,
+                                    onClick = { selectedFilterTab = 2 },
+                                    leadingIcon = { Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                )
                             }
+                        }
+                    }
 
-                            RivoExpressiveCard(
-                                modifier = Modifier.clip(RoundedCornerShape(itemCornerDp)),
-                                containerColor = if (isSelected) {
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                    val cleanQuery = searchQuery.trim()
+                    val isPhoneQuery = cleanQuery.any { it.isDigit() } || cleanQuery.startsWith("+")
+
+                    // Custom Number Direct Selection
+                    if (isPhoneQuery) {
+                        item(key = "custom_phone_entry") {
+                            val isCustomSelected = selectedPhoneNumbers.contains(cleanQuery)
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 8.dp)
+                                    .clip(RoundedCornerShape(rivoCornerDp(20, roundness)))
+                                    .clickable {
+                                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                        if (isMultiSelect) {
+                                            selectedPhoneNumbers = if (isCustomSelected) {
+                                                selectedPhoneNumbers - cleanQuery
+                                            } else {
+                                                selectedPhoneNumbers + cleanQuery
+                                            }
+                                        } else {
+                                            resultNavigator.navigateBack(result = cleanQuery)
+                                        }
+                                    },
+                                shape = RoundedCornerShape(rivoCornerDp(20, roundness)),
+                                color = if (isCustomSelected) {
+                                    MaterialTheme.colorScheme.primaryContainer
                                 } else {
                                     MaterialTheme.colorScheme.surfaceContainerLow
                                 }
                             ) {
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isMultiSelect) {
+                                        Checkbox(
+                                            checked = isCustomSelected,
+                                            onCheckedChange = { checked ->
+                                                selectedPhoneNumbers = if (checked) {
+                                                    selectedPhoneNumbers + cleanQuery
+                                                } else {
+                                                    selectedPhoneNumbers - cleanQuery
+                                                }
+                                            },
+                                            modifier = Modifier.padding(end = 8.dp)
+                                        )
+                                    }
+                                    Surface(
+                                        modifier = Modifier.size(44.dp),
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Outlined.Dialpad, contentDescription = null, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                    Spacer(Modifier.width(16.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Use number: $cleanQuery",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            text = "Tap to select this custom number",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Empty State
+                    if (filteredContacts.isEmpty() && !isPhoneQuery) {
+                        item(key = "empty_state") {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 24.dp),
+                                shape = RoundedCornerShape(rivoCornerDp(24, roundness)),
+                                color = MaterialTheme.colorScheme.surfaceContainerLow
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(32.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Surface(
+                                        modifier = Modifier.size(64.dp),
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.surfaceContainerHighest
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                Icons.Outlined.PersonSearch,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(32.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.height(16.dp))
+                                    Text(
+                                        text = stringResource(R.string.search_no_results_title),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        text = stringResource(R.string.search_no_results_hint),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (initialPhoneToAssign != null) {
+                                        Spacer(Modifier.height(16.dp))
+                                        Button(
+                                            onClick = {
+                                                navigator.navigate(ContactEditScreenDestination(initialPhone = initialPhoneToAssign))
+                                            },
+                                            shape = RoundedCornerShape(rivoCornerDp(16, roundness))
+                                        ) {
+                                            Icon(Icons.Outlined.PersonAdd, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(stringResource(R.string.contact_create_new))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Grouped Contacts with Continuous Grouped Shapes
+                        groupedContacts.forEach { (initial, contactsInGroup) ->
+                            item(key = "header_$initial") {
+                                RivoSectionHeader(
+                                    title = initial,
+                                    modifier = Modifier.padding(top = 14.dp, bottom = 4.dp),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+
+                            itemsIndexed(contactsInGroup, key = { _, c -> "sel_contact_${c.id}" }) { index, contact ->
+                                val primaryNumber = contact.phoneNumbers.firstOrNull() ?: ""
+                                val isSelected = if (isMultiSelect) {
+                                    if (returnContactId) {
+                                        selectedContactIds.contains(contact.id)
+                                    } else {
+                                        contact.phoneNumbers.any { num -> selectedPhoneNumbers.contains(num) }
+                                    }
+                                } else false
+                                val shape = rivoGroupedItemShape(index, contactsInGroup.size)
+
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = shape,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceContainerLow
+                                ) {
+                                    val formattedName = ContactUtils.formatContactName(contact, displayOrder)
+                                    RivoListItem(
+                                        headline = formattedName,
+                                        supporting = if (contact.phoneNumbers.isNotEmpty()) {
+                                            if (contact.phoneNumbers.size > 1) {
+                                                "${formatPhoneNumber(primaryNumber)} (+${contact.phoneNumbers.size - 1} more)"
+                                            } else {
+                                                formatPhoneNumber(primaryNumber)
+                                            }
+                                        } else null,
+                                        avatarName = formattedName,
+                                        photoUri = contact.photoUri,
+                                        badgeIcon = if (contact.isFavorite) Icons.Outlined.Star else if (contact.isPrivate) Icons.Outlined.Lock else null,
+                                        badgeColor = if (contact.isFavorite) MaterialTheme.colorScheme.primary else null,
+                                        selected = isSelected,
+                                        onClick = {
+                                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                             if (isMultiSelect) {
                                                 if (isSelected) {
                                                     selectedContactIds = selectedContactIds - contact.id
                                                     selectedPhoneNumbers = selectedPhoneNumbers - contact.phoneNumbers.toSet()
                                                 } else {
                                                     selectedContactIds = selectedContactIds + contact.id
-                                                    if (primaryNumber.isNotBlank()) {
-                                                        selectedPhoneNumbers = selectedPhoneNumbers + primaryNumber
+                                                    if (contact.phoneNumbers.isNotEmpty()) {
+                                                        selectedPhoneNumbers = selectedPhoneNumbers + contact.phoneNumbers.toSet()
                                                     }
                                                 }
                                             } else {
-                                                if (returnContactId) {
+                                                if (initialPhoneToAssign != null) {
+                                                    navigator.navigate(
+                                                        ContactEditScreenDestination(
+                                                            contactId = contact.id,
+                                                            initialPhone = initialPhoneToAssign
+                                                        )
+                                                    ) {
+                                                        popUpTo(ContactSelectionScreenDestination) {
+                                                            inclusive = true
+                                                        }
+                                                    }
+                                                } else if (returnContactId) {
                                                     resultNavigator.navigateBack(result = contact.id)
                                                 } else {
                                                     if (contact.phoneNumbers.size > 1) {
@@ -437,93 +659,74 @@ fun ContactSelectionScreen(
                                                     }
                                                 }
                                             }
-                                        }
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (isMultiSelect) {
-                                        Checkbox(
-                                            checked = isSelected,
-                                            onCheckedChange = { checked ->
-                                                if (checked) {
-                                                    selectedContactIds = selectedContactIds + contact.id
-                                                    if (primaryNumber.isNotBlank()) {
-                                                        selectedPhoneNumbers = selectedPhoneNumbers + primaryNumber
+                                        },
+                                        trailingContent = {
+                                            if (isMultiSelect) {
+                                                Checkbox(
+                                                    checked = isSelected,
+                                                    onCheckedChange = { checked ->
+                                                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                                        if (checked) {
+                                                            selectedContactIds = selectedContactIds + contact.id
+                                                            if (contact.phoneNumbers.isNotEmpty()) {
+                                                                selectedPhoneNumbers = selectedPhoneNumbers + contact.phoneNumbers.toSet()
+                                                            }
+                                                        } else {
+                                                            selectedContactIds = selectedContactIds - contact.id
+                                                            selectedPhoneNumbers = selectedPhoneNumbers - contact.phoneNumbers.toSet()
+                                                        }
                                                     }
-                                                } else {
-                                                    selectedContactIds = selectedContactIds - contact.id
-                                                    selectedPhoneNumbers = selectedPhoneNumbers - contact.phoneNumbers.toSet()
+                                                )
+                                            } else if (initialPhoneToAssign != null) {
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                                ) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Outlined.PersonAdd,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(13.dp)
+                                                        )
+                                                        Spacer(Modifier.width(4.dp))
+                                                        Text(
+                                                            text = "Add",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    }
                                                 }
-                                            },
-                                            modifier = Modifier.padding(end = 8.dp)
-                                        )
-                                    }
-
-                                    RivoAvatar(
-                                        name = contact.name,
-                                        photoUri = contact.photoUri,
-                                        modifier = Modifier.size(46.dp)
-                                    )
-
-                                    Spacer(Modifier.width(16.dp))
-
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(
-                                                text = contact.name,
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            if (contact.isPrivate) {
-                                                Spacer(Modifier.width(6.dp))
+                                            } else {
                                                 Icon(
-                                                    Icons.Outlined.Lock,
+                                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                                     contentDescription = null,
-                                                    modifier = Modifier.size(14.dp),
-                                                    tint = MaterialTheme.colorScheme.primary
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                    modifier = Modifier.size(20.dp)
                                                 )
                                             }
                                         }
-                                        Spacer(Modifier.height(2.dp))
-                                        if (contact.phoneNumbers.isNotEmpty()) {
-                                            Text(
-                                                text = if (contact.phoneNumbers.size > 1) {
-                                                    "${formatPhoneNumber(primaryNumber)} (+${contact.phoneNumbers.size - 1} more)"
-                                                } else {
-                                                    formatPhoneNumber(primaryNumber)
-                                                },
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-
-                                    if (!isMultiSelect && primaryNumber.isNotBlank()) {
-                                        Icon(
-                                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                    )
                                 }
                             }
                         }
                     }
                 }
-
-                item { Spacer(Modifier.height(80.dp)) }
             }
         }
-    }
 
-    pendingMultiNumberContact?.let { contact ->
-        NumberPickerDialog(
-            numbers = contact.phoneNumbers,
-            onDismissRequest = { pendingMultiNumberContact = null },
-            onNumberSelected = { selectedNumber ->
-                pendingMultiNumberContact = null
-                resultNavigator.navigateBack(result = selectedNumber)
-            }
-        )
+        pendingMultiNumberContact?.let { contact ->
+            NumberPickerDialog(
+                numbers = contact.phoneNumbers,
+                onDismissRequest = { pendingMultiNumberContact = null },
+                onNumberSelected = { selectedNumber ->
+                    pendingMultiNumberContact = null
+                    resultNavigator.navigateBack(result = selectedNumber)
+                }
+            )
+        }
     }
 }

@@ -1,13 +1,8 @@
 package com.grinch.rivo4.view.screen
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
+
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,6 +43,7 @@ private const val BottomScrimFraction = 0.54f
 @Composable
 fun ExpressiveBackground(photoUri: String?, backgroundUri: String? = null) {
     val context = LocalContext.current
+    val isDark = isSystemInDarkTheme()
     val scheme = MaterialTheme.colorScheme
     val surface = scheme.surface
 
@@ -56,26 +52,6 @@ fun ExpressiveBackground(photoUri: String?, backgroundUri: String? = null) {
 
     val customVisible = hasCustomBackground && !customFailed
     val photoVisible = !photoUri.isNullOrEmpty() && !customVisible
-
-    val infiniteTransition = rememberInfiniteTransition(label = "ambientBg")
-    val blob1Offset by infiniteTransition.animateFloat(
-        initialValue = -28f,
-        targetValue = 28f,
-        animationSpec = infiniteRepeatable(tween(11000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "b1"
-    )
-    val blob2Offset by infiniteTransition.animateFloat(
-        initialValue = 28f,
-        targetValue = -28f,
-        animationSpec = infiniteRepeatable(tween(13000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "b2"
-    )
-    val blobAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.18f,
-        targetValue = 0.34f,
-        animationSpec = infiniteRepeatable(tween(6000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "ba"
-    )
 
     val request = remember(backgroundUri, context) {
         if (backgroundUri.isNullOrEmpty()) {
@@ -88,33 +64,19 @@ fun ExpressiveBackground(photoUri: String?, backgroundUri: String? = null) {
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(surface)) {
-        if (!customVisible) {
-            Box(
-                modifier = Modifier
-                    .graphicsLayer {
-                        translationX = blob1Offset.dp.toPx()
-                        translationY = (-80).dp.toPx()
-                    }
-                    .size(280.dp)
-                    .align(Alignment.TopStart)
-                    .clip(CircleShape)
-                    .background(scheme.primaryContainer.copy(alpha = blobAlpha))
-                    .blur(72.dp)
+    val baseModifier = if (isDark) {
+        Modifier.fillMaxSize().background(surface)
+    } else {
+        Modifier.fillMaxSize().background(
+            Brush.verticalGradient(
+                0f to scheme.surface,
+                0.5f to scheme.surfaceContainerLowest,
+                1f to scheme.surfaceContainerLow
             )
-            Box(
-                modifier = Modifier
-                    .graphicsLayer {
-                        translationX = blob2Offset.dp.toPx()
-                        translationY = 100.dp.toPx()
-                    }
-                    .size(320.dp)
-                    .align(Alignment.BottomEnd)
-                    .clip(CircleShape)
-                    .background(scheme.tertiaryContainer.copy(alpha = blobAlpha))
-                    .blur(84.dp)
-            )
-        }
+        )
+    }
+
+    Box(modifier = baseModifier) {
 
         if (photoVisible) {
             AsyncImage(
@@ -122,7 +84,7 @@ fun ExpressiveBackground(photoUri: String?, backgroundUri: String? = null) {
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize().blur(56.dp),
                 contentScale = ContentScale.Crop,
-                alpha = 0.42f
+                alpha = if (isDark) 0.42f else 0.22f
             )
         }
 
@@ -145,8 +107,8 @@ fun ExpressiveBackground(photoUri: String?, backgroundUri: String? = null) {
                     .align(Alignment.TopCenter)
                     .background(
                         Brush.verticalGradient(
-                            0f to surface.copy(alpha = 0.88f),
-                            0.5f to surface.copy(alpha = 0.60f),
+                            0f to surface.copy(alpha = if (isDark) 0.88f else 0.95f),
+                            0.5f to surface.copy(alpha = if (isDark) 0.60f else 0.75f),
                             1f to surface.copy(alpha = 0f)
                         )
                     )
@@ -160,9 +122,9 @@ fun ExpressiveBackground(photoUri: String?, backgroundUri: String? = null) {
                     .background(
                         Brush.verticalGradient(
                             0f to surface.copy(alpha = 0f),
-                            0.34f to surface.copy(alpha = 0.42f),
-                            0.72f to surface.copy(alpha = 0.88f),
-                            1f to surface.copy(alpha = 0.88f)
+                            0.34f to surface.copy(alpha = if (isDark) 0.42f else 0.65f),
+                            0.72f to surface.copy(alpha = if (isDark) 0.88f else 0.94f),
+                            1f to surface.copy(alpha = if (isDark) 0.88f else 0.98f)
                         )
                     )
             )

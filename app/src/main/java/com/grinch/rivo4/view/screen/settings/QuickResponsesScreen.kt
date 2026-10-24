@@ -1,4 +1,7 @@
 package com.grinch.rivo4.view.screen.settings
+import androidx.compose.material.icons.automirrored.outlined.Message
+import com.grinch.rivo4.view.components.RivoFloatingActionButton
+import com.grinch.rivo4.view.components.MenuTopAppBar
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
@@ -26,6 +29,7 @@ import com.grinch.rivo4.view.components.RivoDialog
 import com.grinch.rivo4.view.components.RivoDialogAction
 import com.grinch.rivo4.view.components.RivoDivider
 import com.grinch.rivo4.view.components.RivoExpressiveCard
+import com.grinch.rivo4.view.components.RivoExpressiveGroup
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -51,38 +55,37 @@ fun QuickResponsesScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Quick Responses", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = { navigator.navigateUp() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                    }
-                },
+            MenuTopAppBar(
+                text = stringResource(R.string.settings_quick_responses_title),
+                navigator = navigator,
                 actions = {
                     IconButton(onClick = { showResetConfirm = true }) {
-                        Icon(Icons.Outlined.RestartAlt, contentDescription = "Reset to Defaults")
+                        Icon(
+                            Icons.Outlined.RestartAlt,
+                            contentDescription = stringResource(R.string.settings_quick_responses_reset_tooltip)
+                        )
                     }
                 }
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
+            RivoFloatingActionButton(
                 onClick = {
                     editingText = ""
                     isAddingNew = true
-                },
-                shape = CircleShape
+                }
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Response")
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.settings_quick_responses_add))
             }
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             item {
                 Surface(
@@ -105,13 +108,13 @@ fun QuickResponsesScreen(
                             Spacer(Modifier.width(16.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "In-Call Quick Decline Messages",
+                                    text = stringResource(R.string.loc_in_call_quick_decline_messages),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Spacer(Modifier.height(2.dp))
                                 Text(
-                                    text = "Tap the message button during an incoming call to decline and send one of these canned replies via SMS.",
+                                    text = stringResource(R.string.loc_tap_the_message_button_during_an_incoming_call_to_decline_and_send_one),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -121,12 +124,12 @@ fun QuickResponsesScreen(
                 }
             }
 
-            item {
-                RivoExpressiveCard(
-                    title = "Canned Responses (${responses.size})",
-                    icon = Icons.Outlined.Message
-                ) {
-                    if (responses.isEmpty()) {
+            if (responses.isEmpty()) {
+                item {
+                    RivoExpressiveCard(
+                        title = stringResource(R.string.settings_group_canned_responses, 0),
+                        icon = Icons.AutoMirrored.Outlined.Message
+                    ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -134,54 +137,60 @@ fun QuickResponsesScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "No quick responses configured",
+                                text = stringResource(R.string.settings_quick_responses_no_responses),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                    } else {
+                    }
+                }
+            } else {
+                item {
+                    RivoExpressiveGroup(
+                        title = stringResource(R.string.settings_group_canned_responses, responses.size),
+                        icon = Icons.AutoMirrored.Outlined.Message
+                    ) {
                         responses.forEachIndexed { index, responseText ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = responseText,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                IconButton(
-                                    onClick = {
-                                        editingIndex = index
-                                        editingText = responseText
-                                    }
+                            item {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        Icons.Default.Edit,
-                                        contentDescription = "Edit",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
+                                    Text(
+                                        text = responseText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f)
                                     )
-                                }
-                                IconButton(
-                                    onClick = {
-                                        val updated = responses.toMutableList()
-                                        updated.removeAt(index)
-                                        save(updated)
+                                    IconButton(
+                                        onClick = {
+                                            editingIndex = index
+                                            editingText = responseText
+                                        }
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Edit,
+                                            contentDescription = stringResource(R.string.loc_edit),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
                                     }
-                                ) {
-                                    Icon(
-                                        Icons.Default.Delete,
-                                        contentDescription = "Delete",
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                    IconButton(
+                                        onClick = {
+                                            val updated = responses.toMutableList()
+                                            updated.removeAt(index)
+                                            save(updated)
+                                        }
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = stringResource(R.string.loc_delete),
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
-                            }
-                            if (index < responses.size - 1) {
-                                RivoDivider(Modifier.padding(horizontal = 16.dp))
                             }
                         }
                     }
@@ -189,7 +198,6 @@ fun QuickResponsesScreen(
             }
 
             item {
-                com.grinch.rivo4.view.components.ad.BannerAd()
             }
         }
     }
@@ -197,10 +205,10 @@ fun QuickResponsesScreen(
     if (isAddingNew) {
         RivoDialog(
             onDismissRequest = { isAddingNew = false },
-            title = "New Quick Response",
+            title = stringResource(R.string.loc_new_quick_response),
             icon = Icons.Outlined.AddComment,
             confirmAction = RivoDialogAction(
-                label = "Add",
+                label = stringResource(R.string.loc_add),
                 enabled = editingText.isNotBlank(),
                 onClick = {
                     val trimmed = editingText.trim()
@@ -216,7 +224,7 @@ fun QuickResponsesScreen(
             OutlinedTextField(
                 value = editingText,
                 onValueChange = { editingText = it },
-                label = { Text("Message text") },
+                label = { Text(stringResource(R.string.quick_response_message_text)) },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 maxLines = 3
@@ -228,10 +236,10 @@ fun QuickResponsesScreen(
         val index = editingIndex!!
         RivoDialog(
             onDismissRequest = { editingIndex = null },
-            title = "Edit Quick Response",
+            title = stringResource(R.string.loc_edit_quick_response),
             icon = Icons.Outlined.Edit,
             confirmAction = RivoDialogAction(
-                label = "Save",
+                label = stringResource(R.string.loc_save),
                 enabled = editingText.isNotBlank(),
                 onClick = {
                     val trimmed = editingText.trim()
@@ -247,7 +255,7 @@ fun QuickResponsesScreen(
             OutlinedTextField(
                 value = editingText,
                 onValueChange = { editingText = it },
-                label = { Text("Message text") },
+                label = { Text(stringResource(R.string.quick_response_message_text)) },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 maxLines = 3
@@ -262,9 +270,9 @@ fun QuickResponsesScreen(
                 save(PreferenceManager.DEFAULT_QUICK_RESPONSES)
                 showResetConfirm = false
             },
-            title = "Reset to Defaults",
-            message = "Restore original preset quick responses?",
-            confirmLabel = "Reset",
+            title = stringResource(R.string.loc_reset_to_defaults),
+            message = stringResource(R.string.loc_restore_original_preset_quick_responses),
+            confirmLabel = stringResource(R.string.loc_reset),
             dismissLabel = stringResource(R.string.action_cancel),
             icon = Icons.Outlined.RestartAlt,
             isDestructive = true

@@ -27,6 +27,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.DisposableEffect
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -85,6 +89,7 @@ import com.grinch.rivo4.view.screen.HeroAvatar
 import com.grinch.rivo4.view.screen.HorizontalSwipeToAnswer
 import com.grinch.rivo4.view.screen.IPhoneSwipeToAnswer
 import com.grinch.rivo4.view.screen.InCallKeypad
+import com.grinch.rivo4.view.screen.InCallKeypadBottomSheet
 import com.grinch.rivo4.view.screen.IncomingCallButtons
 import com.grinch.rivo4.view.screen.PulsingAvatar
 import com.grinch.rivo4.view.screen.VerticalSwipeToAnswer
@@ -204,6 +209,14 @@ class FakeCallActivity : ComponentActivity() {
 
         setContent {
             Rivo4Theme {
+                val darkTheme = isSystemInDarkTheme()
+                DisposableEffect(darkTheme) {
+                    val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+                    insetsController.isAppearanceLightStatusBars = !darkTheme
+                    insetsController.isAppearanceLightNavigationBars = !darkTheme
+                    onDispose { }
+                }
+
                 FakeCallScreenContent(
                     callerName = callerName,
                     phoneNumber = phoneNumber,
@@ -634,7 +647,8 @@ private fun FakeCallScreenContent(
                 onPlayDtmf(digit)
             },
             onDigitUp = {},
-            onBackspace = { typedDigits = typedDigits.dropLast(1) }
+            onBackspace = { typedDigits = typedDigits.dropLast(1) },
+            onClearAll = { typedDigits = "" }
         )
     }
 
@@ -804,12 +818,6 @@ private fun FakeCallScreenContent(
                     heroSection()
                 }
 
-                if (showKeypad) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), contentAlignment = Alignment.Center) {
-                        keypadSection(false)
-                    }
-                }
-
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -824,6 +832,21 @@ private fun FakeCallScreenContent(
                     }
                 }
             }
+        }
+
+        if (showKeypad && !isLandscape) {
+            InCallKeypadBottomSheet(
+                typedDigits = typedDigits,
+                onDigitDown = { digit ->
+                    typedDigits += digit
+                    onPlayDtmf(digit)
+                },
+                onDigitUp = {},
+                onBackspace = { typedDigits = typedDigits.dropLast(1) },
+                onClearAll = { typedDigits = "" },
+                onDismiss = { showKeypad = false },
+                onEndCall = { onDeclineOrEndCall() }
+            )
         }
     }
 }

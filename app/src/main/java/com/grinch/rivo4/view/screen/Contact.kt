@@ -1,4 +1,9 @@
 package com.grinch.rivo4.view.screen
+import com.grinch.rivo4.view.theme.LocalCardRoundness
+import com.grinch.rivo4.view.theme.rivoCornerDp
+
+import androidx.compose.material.icons.automirrored.outlined.CallMerge
+import com.grinch.rivo4.view.components.RivoFloatingActionButton
 
 import android.Manifest
 import android.accounts.Account
@@ -42,6 +47,8 @@ import com.google.accompanist.permissions.PermissionStatus
 import com.google.accompanist.permissions.rememberPermissionState
 import com.grinch.rivo4.R
 import com.grinch.rivo4.controller.ContactsViewModel
+import com.grinch.rivo4.controller.util.PreferenceManager
+import org.koin.compose.koinInject
 import com.grinch.rivo4.controller.util.ContactUtils
 import com.grinch.rivo4.view.components.AZListScroll
 import com.grinch.rivo4.view.components.BottomBar
@@ -51,6 +58,7 @@ import com.grinch.rivo4.view.components.RivoDialogAction
 import com.grinch.rivo4.view.components.RivoExpressiveCard
 import com.grinch.rivo4.view.components.RivoFilterChip
 import com.grinch.rivo4.view.components.RivoLoadingIndicatorView
+import com.grinch.rivo4.view.components.ContactLoadingIndicator
 import com.grinch.rivo4.view.components.RivoPullToRefreshIndicator
 import com.grinch.rivo4.view.components.ScrollToTopButton
 import com.grinch.rivo4.view.components.LocalScrollToTopBottomPadding
@@ -67,7 +75,7 @@ import org.koin.compose.viewmodel.koinActivityViewModel
 
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
-@Destination<RootGraph>(style = NoTransitions::class)
+@Destination<RootGraph>
 @Composable
 fun ContactScreen(navController: NavController, navigator: DestinationsNavigator) {
     ContactScreenContent(navController, navigator)
@@ -112,7 +120,10 @@ fun ContactScreenContent(
                 selectedIds = emptySet()
             },
             onMoveToPrivate = {
-                selectedIds.forEach { contactsVM.makeContactPrivate(it) }
+                contactsVM.moveContacts(
+                    selectedIds.toList(),
+                    android.accounts.Account("private", "com.grinch.rivo4.private")
+                )
                 selectedIds = emptySet()
             },
             availableAccounts = availableAccounts
@@ -157,14 +168,10 @@ fun ContactScreenContent(
         floatingActionButton = {
             if (selectedIds.isEmpty()) {
                 val fabBottomPadding = LocalScrollToTopBottomPadding.current
-                FloatingActionButton(
+                RivoFloatingActionButton(
                     onClick = {
                         navigator.navigate(ContactEditScreenDestination())
                     },
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    shape = RoundedCornerShape(24.dp),
-                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp, pressedElevation = 6.dp),
                     modifier = Modifier.padding(bottom = fabBottomPadding)
                 ) {
                     Icon(Icons.Default.PersonAdd, stringResource(R.string.action_add_contact))
@@ -228,17 +235,17 @@ fun AccountFilterBar(viewModel: ContactsViewModel) {
         }
         item {
             RivoFilterChip(stringResource(R.string.label_local_memory), showLocalOnly, {
-                viewModel.setShowLocalOnly(true)
+                viewModel.setShowLocalOnly(!showLocalOnly)
             })
         }
         item {
             RivoFilterChip(stringResource(R.string.contact_filter_private), showPrivateOnly, {
-                viewModel.setShowPrivateOnly(true)
+                viewModel.setShowPrivateOnly(!showPrivateOnly)
             })
         }
         items(accounts) { account ->
             RivoFilterChip(ContactUtils.getFriendlyAccountName(LocalContext.current, account), selectedAccount == account, {
-                viewModel.selectAccount(account)
+                viewModel.selectAccount(if (selectedAccount == account) null else account)
             })
         }
     }
@@ -435,27 +442,32 @@ fun ContactContent(
     onToggleSelection: (String) -> Unit
 ) {
     val contactsVM: ContactsViewModel = koinActivityViewModel()
+    val prefs = koinInject<PreferenceManager>()
+    val settingsState by prefs.settingsChanged.collectAsState()
+    val isContactCardEnabled = remember(settingsState) { prefs.isContactManagementCardEnabled() }
+
     val isLoading by contactsVM.isLoading.collectAsState()
     val contacts by contactsVM.filteredContacts.collectAsState()
     val groupedContacts by contactsVM.groupedContacts.collectAsState()
     val duplicateGroups by contactsVM.duplicateGroups.collectAsState()
+    val isMerging by contactsVM.isMerging.collectAsState()
 
-    var isCardDismissed by remember { mutableStateOf(false) }
     var showMergeAllDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(isGranted) {
-        if (isGranted) {
+        if (isGranted && contacts.isEmpty()) {
             contactsVM.fetchContacts()
         }
     }
 
     val pullToRefreshState = rememberPullToRefreshState()
 
-    val showTopCard = selectedIds.isEmpty() && !isCardDismissed
+    val showTopCard = selectedIds.isEmpty() && isContactCardEnabled
     val topCardHeader: (@Composable () -> Unit)? = if (showTopCard) {
         {
             ContactManagementTopCard(
                 duplicateGroups = duplicateGroups,
+                isMerging = isMerging,
                 onOpenManagement = {
                     navigator.navigate(ContactManagementScreenDestination)
                 },
@@ -463,7 +475,7 @@ fun ContactContent(
                     showMergeAllDialog = true
                 },
                 onHideCard = {
-                    isCardDismissed = true
+                    prefs.setContactManagementCardEnabled(false)
                 }
             )
         }
@@ -484,7 +496,7 @@ fun ContactContent(
         Column(modifier = Modifier.fillMaxSize()) {
             if (isGranted) {
                 if (isLoading && contacts.isEmpty()) {
-                    RivoLoadingIndicatorView(modifier = Modifier.fillMaxSize())
+                    ContactLoadingIndicator(modifier = Modifier.fillMaxSize())
                 } else if (contacts.isEmpty()) {
                     EmptyContactsState()
                 } else {
@@ -507,25 +519,29 @@ fun ContactContent(
     if (showMergeAllDialog) {
         RivoConfirmationDialog(
             onDismissRequest = { showMergeAllDialog = false },
-            onConfirm = { contactsVM.mergeAllDuplicates() },
+            onConfirm = {
+                showMergeAllDialog = false
+                contactsVM.mergeAllDuplicates()
+            },
             title = stringResource(R.string.contact_management_merge_all_confirm_title),
             message = stringResource(R.string.contact_management_merge_all_confirm_msg, duplicateGroups.size),
             confirmLabel = stringResource(R.string.contact_management_merge_all),
             dismissLabel = stringResource(R.string.action_cancel),
-            icon = Icons.Outlined.CallMerge
+            icon = Icons.AutoMirrored.Outlined.CallMerge
         )
     }
 }
 
 @Composable
 fun EmptyContactsState() {
+    val roundness = LocalCardRoundness.current
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Surface(
-            shape = RoundedCornerShape(32.dp),
+            shape = RoundedCornerShape(rivoCornerDp(32, roundness)),
             color = MaterialTheme.colorScheme.surfaceContainer,
             modifier = Modifier.size(120.dp)
         ) {
@@ -601,6 +617,7 @@ fun ContactManagementTopCard(
     onOpenManagement: () -> Unit,
     onMergeAll: () -> Unit,
     modifier: Modifier = Modifier,
+    isMerging: Boolean = false,
     onHideCard: (() -> Unit)? = null
 ) {
     val totalDuplicates = duplicateGroups.sumOf { it.size }
@@ -638,7 +655,7 @@ fun ContactManagementTopCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (hasDuplicates) Icons.Outlined.CallMerge else Icons.Outlined.CheckCircle,
+                        imageVector = if (hasDuplicates) Icons.AutoMirrored.Outlined.CallMerge else Icons.Outlined.CheckCircle,
                         contentDescription = null,
                         modifier = Modifier.size(20.dp),
                         tint = if (hasDuplicates) MaterialTheme.colorScheme.onErrorContainer
@@ -666,7 +683,7 @@ fun ContactManagementTopCard(
                                 contentColor = MaterialTheme.colorScheme.onErrorContainer
                             ) {
                                 Text(
-                                    text = "$totalDuplicates",
+                                    text = stringResource(R.string.loc_totalduplicates),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -693,7 +710,7 @@ fun ContactManagementTopCard(
                     ) {
                         Icon(
                             Icons.Outlined.Close,
-                            contentDescription = "Dismiss",
+                            contentDescription = stringResource(R.string.loc_dismiss),
                             modifier = Modifier.size(18.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -731,6 +748,7 @@ fun ContactManagementTopCard(
 
                     Button(
                         onClick = onMergeAll,
+                        enabled = !isMerging,
                         modifier = Modifier
                             .weight(1f)
                             .height(38.dp),
@@ -741,17 +759,25 @@ fun ContactManagementTopCard(
                             contentColor = MaterialTheme.colorScheme.onError
                         )
                     ) {
-                        Icon(
-                            Icons.Outlined.CallMerge,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = stringResource(R.string.contact_management_merge_all),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+                        if (isMerging) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = MaterialTheme.colorScheme.onError,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.CallMerge,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = stringResource(R.string.contact_management_merge_all),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             } else {
@@ -762,7 +788,7 @@ fun ContactManagementTopCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Manage storage & tools",
+                        text = stringResource(R.string.loc_manage_storage_tools),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary

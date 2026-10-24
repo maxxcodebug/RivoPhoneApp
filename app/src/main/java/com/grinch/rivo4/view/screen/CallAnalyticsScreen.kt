@@ -1,4 +1,9 @@
 package com.grinch.rivo4.view.screen
+import com.grinch.rivo4.view.components.MenuTopAppBar
+import com.grinch.rivo4.view.components.RivoTopBarIconButton
+import com.grinch.rivo4.view.theme.LocalCardRoundness
+import com.grinch.rivo4.view.theme.rivoCornerDp
+
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -36,6 +41,7 @@ import com.grinch.rivo4.view.components.RivoAvatar
 import com.grinch.rivo4.view.components.RivoDivider
 import com.grinch.rivo4.view.components.RivoExpressiveCard
 import com.grinch.rivo4.view.components.RivoLoadingIndicatorView
+import com.grinch.rivo4.view.components.RivoSwitchListItem
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.generated.destinations.ContactDetailsScreenDestination
@@ -49,38 +55,108 @@ fun CallAnalyticsScreen(
     navigator: DestinationsNavigator
 ) {
     val viewModel: CallAnalyticsViewModel = koinViewModel()
+    val isTrackingEnabled by viewModel.isTrackingEnabled.collectAsState()
     val analytics by viewModel.analytics.collectAsState()
     val selectedRange by viewModel.selectedRange.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Call Analytics & Tracking", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = { navigator.navigateUp() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                    }
-                },
+            MenuTopAppBar(
+                text = stringResource(R.string.settings_call_analytics_title),
+                navigator = navigator,
                 actions = {
-                    IconButton(onClick = { viewModel.loadAnalytics() }) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = "Refresh")
+                    if (isTrackingEnabled) {
+                        RivoTopBarIconButton(
+                            onClick = { viewModel.loadAnalytics(forceRefresh = true) },
+                            icon = Icons.Outlined.Refresh,
+                            contentDescription = stringResource(R.string.call_analytics_refresh)
+                        )
                     }
                 }
             )
         },
         containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
-        if (isLoading && analytics.totalCalls == 0) {
-            RivoLoadingIndicatorView(modifier = Modifier.fillMaxSize().padding(padding))
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Tracking Switch Item
+            item {
+                RivoExpressiveCard {
+                    RivoSwitchListItem(
+                        headline = stringResource(R.string.settings_call_analytics_title),
+                        supporting = stringResource(
+                            if (isTrackingEnabled) R.string.settings_call_analytics_supporting
+                            else R.string.settings_call_analytics_disabled_supporting
+                        ),
+                        leadingIcon = Icons.Outlined.Analytics,
+                        checked = isTrackingEnabled,
+                        onCheckedChange = { viewModel.setAnalyticsTrackingEnabled(it) }
+                    )
+                }
+            }
+
+            if (!isTrackingEnabled) {
+                item {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.large,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Analytics,
+                                contentDescription = null,
+                                modifier = Modifier.size(56.dp),
+                                tint = MaterialTheme.colorScheme.outline
+                            )
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                text = stringResource(R.string.call_analytics_disabled_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = stringResource(R.string.call_analytics_disabled_desc),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(Modifier.height(20.dp))
+                            Button(
+                                onClick = { viewModel.setAnalyticsTrackingEnabled(true) },
+                                shape = CircleShape
+                            ) {
+                                Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.call_analytics_enable_action))
+                            }
+                        }
+                    }
+                }
+            } else if (isLoading && analytics.totalCalls == 0) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(250.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        RivoLoadingIndicatorView()
+                    }
+                }
+            } else {
                 // Time Range Segmented Control
                 item {
                     SingleChoiceSegmentedButtonRow(
@@ -111,7 +187,7 @@ fun CallAnalyticsScreen(
                 // Most Talked Person Leaderboard
                 item {
                     Text(
-                        text = "Most Talked Persons",
+                        text = stringResource(R.string.call_analytics_most_talked),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
@@ -132,7 +208,7 @@ fun CallAnalyticsScreen(
                             ) {
                                 Icon(Icons.Outlined.PhoneDisabled, contentDescription = null, modifier = Modifier.size(36.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.height(8.dp))
-                                Text("No call records found for this period", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.call_analytics_no_records), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -152,10 +228,15 @@ fun CallAnalyticsScreen(
                 if (analytics.simUsage.size > 1) {
                     item {
                         RivoExpressiveCard(
-                            title = "SIM Usage Breakdown",
+                            title = stringResource(R.string.call_analytics_sim_breakdown),
                             icon = Icons.Outlined.SimCard
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
                                 analytics.simUsage.forEach { (sim, durationSec) ->
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -179,9 +260,10 @@ fun CallAnalyticsScreen(
 
 @Composable
 private fun HeroTalkTimeCard(analytics: CallAnalyticsSummary) {
+    val roundness = LocalCardRoundness.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(rivoCornerDp(24, roundness)),
         color = MaterialTheme.colorScheme.primaryContainer,
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer
     ) {
@@ -201,7 +283,7 @@ private fun HeroTalkTimeCard(analytics: CallAnalyticsSummary) {
             }
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "Total Talk Time",
+                text = stringResource(R.string.call_analytics_total_talk_time),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
             )
@@ -217,9 +299,9 @@ private fun HeroTalkTimeCard(analytics: CallAnalyticsSummary) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                HeroMetricItem(label = "Total Calls", value = "${analytics.totalCalls}")
-                HeroMetricItem(label = "Avg Duration", value = formatShortDuration(analytics.avgDurationSeconds))
-                HeroMetricItem(label = "Missed", value = "${analytics.missedCalls}")
+                HeroMetricItem(label = stringResource(R.string.call_analytics_total_calls), value = "${analytics.totalCalls}")
+                HeroMetricItem(label = stringResource(R.string.call_analytics_average_duration), value = formatShortDuration(analytics.avgDurationSeconds))
+                HeroMetricItem(label = stringResource(R.string.call_analytics_missed), value = "${analytics.missedCalls}")
             }
         }
     }
@@ -244,10 +326,15 @@ private fun HeroMetricItem(label: String, value: String) {
 @Composable
 private fun CallDistributionCard(analytics: CallAnalyticsSummary) {
     RivoExpressiveCard(
-        title = "Call Breakdown",
+        title = stringResource(R.string.call_analytics_breakdown),
         icon = Icons.Outlined.PieChart
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             val total = analytics.totalCalls.coerceAtLeast(1).toFloat()
             val inRatio = analytics.incomingCalls / total
             val outRatio = analytics.outgoingCalls / total
@@ -294,17 +381,17 @@ private fun CallDistributionCard(analytics: CallAnalyticsSummary) {
             ) {
                 BreakdownLegend(
                     color = Color(0xFF2E7D32),
-                    label = "Incoming",
+                    label = stringResource(R.string.call_analytics_incoming),
                     count = analytics.incomingCalls
                 )
                 BreakdownLegend(
                     color = MaterialTheme.colorScheme.primary,
-                    label = "Outgoing",
+                    label = stringResource(R.string.call_analytics_outgoing),
                     count = analytics.outgoingCalls
                 )
                 BreakdownLegend(
                     color = MaterialTheme.colorScheme.error,
-                    label = "Missed",
+                    label = stringResource(R.string.call_analytics_missed),
                     count = analytics.missedCalls + analytics.rejectedCalls
                 )
             }

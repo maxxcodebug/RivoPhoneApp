@@ -1,4 +1,11 @@
 package com.grinch.rivo4.view.screen.settings
+import androidx.compose.ui.res.stringResource
+import com.grinch.rivo4.R
+import com.grinch.rivo4.view.theme.LocalCardRoundness
+import com.grinch.rivo4.view.theme.rivoCornerDp
+
+import androidx.compose.material.icons.automirrored.outlined.CallMerge
+import com.grinch.rivo4.view.components.MenuTopAppBar
 
 import android.accounts.Account
 import android.view.HapticFeedbackConstants
@@ -8,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import android.util.Log
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -32,10 +40,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.grinch.rivo4.R
 import com.grinch.rivo4.controller.ContactsViewModel
 import com.grinch.rivo4.controller.util.ContactUtils
 import com.grinch.rivo4.controller.util.PreferenceManager
+import com.grinch.rivo4.controller.util.SettingsHighlightManager
 import com.grinch.rivo4.controller.util.formatPhoneNumber
 import com.grinch.rivo4.modal.data.Contact
 import com.grinch.rivo4.view.components.*
@@ -43,15 +51,17 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.generated.destinations.ContactVisibilityScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.PrivateContactsScreenDestination
+import com.ramcosta.composedestinations.generated.destinations.TrashContactsScreenDestination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import com.grinch.rivo4.view.theme.RivoMaterialShapes
 import com.grinch.rivo4.view.theme.rememberRivoMorphShape
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinActivityViewModel
 
 sealed class StorageTarget(val id: String, val displayName: String) {
-    object LocalMemory : StorageTarget("local", "Local Memory (Device)")
+    object LocalMemory : StorageTarget("local", "Device")
     object PrivateStorage : StorageTarget("private", "Private Storage (App Vault)")
     data class SimCard(val account: Account) : StorageTarget("sim_${account.name}", "SIM Card (${account.name})")
     data class CloudAccount(val account: Account) : StorageTarget("account_${account.name}_${account.type}", account.name)
@@ -68,6 +78,8 @@ fun ContactManagementScreen(
     val scope = rememberCoroutineScope()
     val contactsVM: ContactsViewModel = koinActivityViewModel()
     val prefs = koinInject<PreferenceManager>()
+    val settingsState by prefs.settingsChanged.collectAsState()
+    var separateContactsIcon by remember(settingsState) { mutableStateOf(prefs.isSeparateContactsIconEnabled()) }
 
     val allContacts by contactsVM.allContacts.collectAsState()
     val duplicateGroups by contactsVM.duplicateGroups.collectAsState()
@@ -78,6 +90,36 @@ fun ContactManagementScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
+
+    LaunchedEffect(SettingsHighlightManager.highlightEpoch) {
+        if (SettingsHighlightManager.highlightEpoch == 0L) return@LaunchedEffect
+        val target = SettingsHighlightManager.highlightedSettingTitle ?: return@LaunchedEffect
+        val targetIndex = when {
+            target.contains("Duplicate", ignoreCase = true) ||
+            target.contains("Merge", ignoreCase = true) ||
+            SettingsHighlightManager.matches(context.getString(R.string.contact_management_duplicates_title)) -> 1
+
+            target.contains("Move", ignoreCase = true) ||
+            target.contains("Storage", ignoreCase = true) ||
+            SettingsHighlightManager.matches(context.getString(R.string.contact_management_move_title)) -> 2
+
+            target.contains("Standardize", ignoreCase = true) ||
+            target.contains("E.164", ignoreCase = true) ||
+            SettingsHighlightManager.matches(context.getString(R.string.contact_management_standardize_numbers)) -> 3
+
+            target.contains("Card", ignoreCase = true) ||
+            target.contains("Icon", ignoreCase = true) ||
+            target.contains("Trash", ignoreCase = true) ||
+            SettingsHighlightManager.matches(context.getString(R.string.settings_contact_management_card)) ||
+            SettingsHighlightManager.matches(context.getString(R.string.settings_contacts_launcher_icon)) -> 4
+
+            else -> -1
+        }
+        if (targetIndex >= 0) {
+            delay(150L)
+            listState.animateScrollToItem(targetIndex)
+        }
+    }
 
     var showMergeAllDialog by remember { mutableStateOf(false) }
     var showStandardizeConfirm by remember { mutableStateOf(false) }
@@ -108,44 +150,55 @@ fun ContactManagementScreen(
     var showMoveAllConfirmDialog by remember { mutableStateOf(false) }
 
     // Filter contacts belonging to selected source storage
-    val sourceContacts = remember(allContacts, selectedSourceStorage) {
+    val sourceContacts = remember(allContacts, selectedSourceStorage, availableAccounts) {
         when (val src = selectedSourceStorage) {
-            is StorageTarget.LocalMemory -> allContacts.filter { !it.isPrivate && it.accountName == null && it.accountType == null }
+            is StorageTarget.LocalMemory -> allContacts.filter { !it.isPrivate && ContactUtils.isContactLocal(it, availableAccounts) }
             is StorageTarget.PrivateStorage -> allContacts.filter { it.isPrivate }
-            is StorageTarget.SimCard -> allContacts.filter { !it.isPrivate && it.accountName == src.account.name && it.accountType == src.account.type }
-            is StorageTarget.CloudAccount -> allContacts.filter { !it.isPrivate && it.accountName == src.account.name && it.accountType == src.account.type }
+            is StorageTarget.SimCard -> allContacts.filter { contact ->
+                !ContactUtils.isContactLocal(contact, availableAccounts) && !contact.isPrivate && (
+                    (contact.accountName == src.account.name && contact.accountType == src.account.type) ||
+                    contact.linkedAccounts.any { it.name == src.account.name && it.type == src.account.type }
+                )
+            }
+            is StorageTarget.CloudAccount -> allContacts.filter { contact ->
+                !ContactUtils.isContactLocal(contact, availableAccounts) && !contact.isPrivate && (
+                    (contact.accountName == src.account.name && contact.accountType == src.account.type) ||
+                    contact.linkedAccounts.any { it.name == src.account.name && it.type == src.account.type }
+                )
+            }
         }
     }
 
-    val destContactsCount = remember(allContacts, selectedDestStorage) {
+    val destContactsCount = remember(allContacts, selectedDestStorage, availableAccounts) {
         when (val dst = selectedDestStorage) {
-            is StorageTarget.LocalMemory -> allContacts.count { !it.isPrivate && it.accountName == null && it.accountType == null }
+            is StorageTarget.LocalMemory -> allContacts.count { !it.isPrivate && ContactUtils.isContactLocal(it, availableAccounts) }
             is StorageTarget.PrivateStorage -> allContacts.count { it.isPrivate }
-            is StorageTarget.SimCard -> allContacts.count { !it.isPrivate && it.accountName == dst.account.name && it.accountType == dst.account.type }
-            is StorageTarget.CloudAccount -> allContacts.count { !it.isPrivate && it.accountName == dst.account.name && it.accountType == dst.account.type }
+            is StorageTarget.SimCard -> allContacts.count { contact ->
+                !ContactUtils.isContactLocal(contact, availableAccounts) && !contact.isPrivate && (
+                    (contact.accountName == dst.account.name && contact.accountType == dst.account.type) ||
+                    contact.linkedAccounts.any { it.name == dst.account.name && it.type == dst.account.type }
+                )
+            }
+            is StorageTarget.CloudAccount -> allContacts.count { contact ->
+                !ContactUtils.isContactLocal(contact, availableAccounts) && !contact.isPrivate && (
+                    (contact.accountName == dst.account.name && contact.accountType == dst.account.type) ||
+                    contact.linkedAccounts.any { it.name == dst.account.name && it.type == dst.account.type }
+                )
+            }
         }
     }
 
     // Counts by storage
-    val localCount = remember(allContacts) { allContacts.count { !it.isPrivate && it.accountName == null && it.accountType == null } }
+    val localCount = remember(allContacts, availableAccounts) { allContacts.count { !it.isPrivate && ContactUtils.isContactLocal(it, availableAccounts) } }
     val privateCount = remember(allContacts) { allContacts.count { it.isPrivate } }
-    val simCount = remember(allContacts) { allContacts.count { !it.isPrivate && it.accountType?.contains("sim", ignoreCase = true) == true } }
-    val cloudCount = remember(allContacts) { allContacts.count { !it.isPrivate && it.accountType != null && it.accountType?.contains("sim", ignoreCase = true) != true } }
+    val simCount = remember(allContacts, availableAccounts) { allContacts.count { !it.isPrivate && !ContactUtils.isContactLocal(it, availableAccounts) && it.accountType?.contains("sim", ignoreCase = true) == true } }
+    val cloudCount = remember(allContacts, availableAccounts) { allContacts.count { !it.isPrivate && !ContactUtils.isContactLocal(it, availableAccounts) && it.accountType?.contains("sim", ignoreCase = true) != true } }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.contact_management_title), fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = { navigator.navigateUp() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { contactsVM.fetchContacts() }) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = "Refresh")
-                    }
-                }
+            MenuTopAppBar(
+                text = stringResource(R.string.settings_manage_title),
+                navigator = navigator
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -166,13 +219,16 @@ fun ContactManagementScreen(
                     title = stringResource(R.string.contact_management_storage_overview),
                     icon = Icons.Outlined.PieChart
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(16.dp)
                     ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                         Column {
                             Text(
                                 text = "${allContacts.size}",
@@ -223,6 +279,7 @@ fun ContactManagementScreen(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
                         )
                     }
+                    }
                 }
             }
 
@@ -230,15 +287,18 @@ fun ContactManagementScreen(
             item {
                 RivoExpressiveCard(
                     title = stringResource(R.string.contact_management_duplicates_title),
-                    icon = Icons.Outlined.CallMerge
+                    icon = Icons.AutoMirrored.Outlined.CallMerge
                 ) {
-                    if (duplicateGroups.isEmpty()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
+                        if (duplicateGroups.isEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                             Surface(
                                 modifier = Modifier.size(44.dp),
                                 shape = CircleShape,
@@ -299,7 +359,7 @@ fun ContactManagementScreen(
                                 if (isMerging) {
                                     CircularProgressIndicator(modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
                                 } else {
-                                    Icon(Icons.Outlined.CallMerge, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.AutoMirrored.Outlined.CallMerge, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(6.dp))
                                     Text(stringResource(R.string.contact_management_merge_all))
                                 }
@@ -328,6 +388,7 @@ fun ContactManagementScreen(
                             }
                         }
                     }
+                    }
                 }
             }
 
@@ -337,11 +398,16 @@ fun ContactManagementScreen(
                     title = stringResource(R.string.contact_management_move_title),
                     icon = Icons.AutoMirrored.Filled.DriveFileMove
                 ) {
-                    Text(
-                        text = stringResource(R.string.contact_management_move_supporting),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.contact_management_move_supporting),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
 
                     Spacer(Modifier.height(14.dp))
 
@@ -386,7 +452,7 @@ fun ContactManagementScreen(
                                 ) {
                                     Icon(
                                         Icons.Default.SwapVert,
-                                        contentDescription = "Swap Source & Destination",
+                                        contentDescription = stringResource(R.string.contact_management_swap_source_destination),
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Spacer(Modifier.width(4.dp))
@@ -479,7 +545,7 @@ fun ContactManagementScreen(
                                 if (selectedSourceStorage == selectedDestStorage) {
                                     scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.contact_management_same_source_dest)) }
                                 } else if (sourceContacts.isEmpty()) {
-                                    scope.launch { snackbarHostState.showSnackbar("No contacts found in ${selectedSourceStorage.displayName}") }
+                                    scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.contact_management_no_contacts, selectedSourceStorage.displayName)) }
                                 } else {
                                     showMoveSelectionDialog = true
                                 }
@@ -498,7 +564,7 @@ fun ContactManagementScreen(
                                 if (selectedSourceStorage == selectedDestStorage) {
                                     scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.contact_management_same_source_dest)) }
                                 } else if (sourceContacts.isEmpty()) {
-                                    scope.launch { snackbarHostState.showSnackbar("No contacts found in ${selectedSourceStorage.displayName}") }
+                                    scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.contact_management_no_contacts, selectedSourceStorage.displayName)) }
                                 } else {
                                     showMoveAllConfirmDialog = true
                                 }
@@ -512,49 +578,119 @@ fun ContactManagementScreen(
                             Text(stringResource(R.string.contact_management_move_all, sourceContacts.size), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
+                    }
                 }
             }
 
 
             // 4. Address Book Tools
             item {
-                RivoExpressiveCard(
+                RivoExpressiveGroup(
                     title = stringResource(R.string.contact_management_tools_title),
                     icon = Icons.Outlined.Build
                 ) {
-                    RivoListItem(
-                        headline = stringResource(R.string.contact_management_standardize_numbers),
-                        supporting = stringResource(R.string.contact_management_standardize_supporting),
-                        leadingIcon = Icons.Outlined.FormatColorText,
-                        onClick = { showStandardizeConfirm = true }
-                    )
-                    if (standardizeProgress != null) {
-                        LinearProgressIndicator(
-                            progress = { standardizeProgress ?: 0f },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                    item {
+                        Column {
+                            RivoListItem(
+                                headline = stringResource(R.string.contact_management_standardize_numbers),
+                                supporting = stringResource(R.string.contact_management_standardize_supporting),
+                                leadingIcon = Icons.Outlined.FormatColorText,
+                                onClick = { showStandardizeConfirm = true }
+                            )
+                            if (standardizeProgress != null) {
+                                LinearProgressIndicator(
+                                    progress = { standardizeProgress ?: 0f },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                                )
+                            }
+                        }
+                    }
+
+                    item {
+                        RivoListItem(
+                            headline = stringResource(R.string.settings_manage_visibility),
+                            supporting = stringResource(R.string.settings_manage_visibility_supporting),
+                            leadingIcon = Icons.Outlined.Visibility,
+                            onClick = { navigator.navigate(ContactVisibilityScreenDestination) }
                         )
                     }
 
-                    RivoListItem(
-                        headline = stringResource(R.string.settings_manage_visibility),
-                        supporting = stringResource(R.string.settings_manage_visibility_supporting),
-                        leadingIcon = Icons.Outlined.Visibility,
-                        onClick = { navigator.navigate(ContactVisibilityScreenDestination) }
-                    )
+                    item {
+                        RivoListItem(
+                            headline = "Private Storage Vault",
+                            supporting = "Manage secret local contacts stored strictly in app database",
+                            leadingIcon = Icons.Outlined.Lock,
+                            onClick = { navigator.navigate(PrivateContactsScreenDestination) }
+                        )
+                    }
 
-                    RivoListItem(
-                        headline = "Private Storage Vault",
-                        supporting = "Manage secret local contacts stored strictly in app database",
-                        leadingIcon = Icons.Outlined.Lock,
-                        onClick = { navigator.navigate(PrivateContactsScreenDestination) }
-                    )
+                    item {
+                        var trashEnabled by remember(settingsState) { mutableStateOf(prefs.isContactsTrashEnabled()) }
+                        RivoSwitchListItem(
+                            headline = stringResource(R.string.settings_contacts_trash_title),
+                            supporting = stringResource(R.string.settings_contacts_trash_supporting),
+                            leadingIcon = Icons.Outlined.Delete,
+                            checked = trashEnabled,
+                            onCheckedChange = { enabled ->
+                                trashEnabled = enabled
+                                prefs.setContactsTrashEnabled(enabled)
+                            }
+                        )
+                    }
+
+                    item {
+                        val trashedContacts by contactsVM.trashedContacts.collectAsState()
+                        LaunchedEffect(Unit) {
+                            contactsVM.fetchTrashedContacts()
+                        }
+                        RivoListItem(
+                            headline = stringResource(R.string.settings_contacts_trash_view),
+                            supporting = stringResource(R.string.settings_contacts_trash_view_supporting, trashedContacts.size),
+                            leadingIcon = Icons.Outlined.RestoreFromTrash,
+                            onClick = { navigator.navigate(TrashContactsScreenDestination) }
+                        )
+                    }
+
+                    item {
+                        var contactManagementCard by remember(settingsState) { mutableStateOf(prefs.isContactManagementCardEnabled()) }
+                        RivoSwitchListItem(
+                            headline = stringResource(R.string.settings_contact_management_card),
+                            supporting = stringResource(R.string.settings_contact_management_card_supporting),
+                            leadingIcon = Icons.Outlined.Info,
+                            checked = contactManagementCard,
+                            onCheckedChange = { enabled ->
+                                contactManagementCard = enabled
+                                prefs.setContactManagementCardEnabled(enabled)
+                            }
+                        )
+                    }
+
+                    item {
+                        RivoSwitchListItem(
+                            headline = stringResource(R.string.settings_contacts_launcher_icon),
+                            supporting = stringResource(R.string.settings_contacts_launcher_icon_supporting),
+                            leadingIcon = Icons.Outlined.PersonPin,
+                            checked = separateContactsIcon,
+                            onCheckedChange = { enabled ->
+                                separateContactsIcon = enabled
+                                prefs.setSeparateContactsIconEnabled(enabled)
+                                try {
+                                    val pm = context.packageManager
+                                    val componentName = android.content.ComponentName(context, "com.grinch.rivo4.ContactsAliasActivity")
+                                    val state = if (enabled) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                                    pm.setComponentEnabledSetting(componentName, state, android.content.pm.PackageManager.DONT_KILL_APP)
+                                } catch (e: Exception) {
+                                    Log.e("ContactManagementScreen", "Error: ${e.message}", e)
+                                }
+                            }
+                        )
+                    }
                 }
             }
 
             item {
-                com.grinch.rivo4.view.components.ad.BannerAd()
             }
 
             item { Spacer(Modifier.height(40.dp)) }
@@ -566,6 +702,7 @@ fun ContactManagementScreen(
         RivoConfirmationDialog(
             onDismissRequest = { showMergeAllDialog = false },
             onConfirm = {
+                showMergeAllDialog = false
                 contactsVM.mergeAllDuplicates()
                 scope.launch {
                     snackbarHostState.showSnackbar(context.getString(R.string.contact_management_merge_success, duplicateGroups.size))
@@ -575,7 +712,7 @@ fun ContactManagementScreen(
             message = stringResource(R.string.contact_management_merge_all_confirm_msg, duplicateGroups.size),
             confirmLabel = stringResource(R.string.contact_management_merge_all),
             dismissLabel = stringResource(R.string.action_cancel),
-            icon = Icons.Outlined.CallMerge
+            icon = Icons.AutoMirrored.Outlined.CallMerge
         )
     }
 
@@ -587,9 +724,12 @@ fun ContactManagementScreen(
             is StorageTarget.SimCard -> Pair(dest.account.name, dest.account.type)
             is StorageTarget.CloudAccount -> Pair(dest.account.name, dest.account.type)
         }
+        val count = sourceContacts.size
+        val destName = selectedDestStorage.displayName
         RivoConfirmationDialog(
             onDismissRequest = { showMoveAllConfirmDialog = false },
             onConfirm = {
+                showMoveAllConfirmDialog = false
                 contactsVM.moveContactsToStorage(
                     contactIds = sourceContacts.map { it.id },
                     accountName = targetAccount.first,
@@ -599,8 +739,8 @@ fun ContactManagementScreen(
                         snackbarHostState.showSnackbar(
                             context.getString(
                                 R.string.contact_management_move_success,
-                                sourceContacts.size,
-                                selectedDestStorage.displayName
+                                count,
+                                destName
                             )
                         )
                     }
@@ -749,7 +889,7 @@ fun DuplicateGroupItem(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_dismiss), modifier = Modifier.size(18.dp))
                     }
                     FilledTonalButton(
                         onClick = onMerge,
@@ -823,9 +963,10 @@ fun StorageTargetCard(
     val morph = rememberRivoMorphShape(RivoMaterialShapes.Cookie12Sided, RivoMaterialShapes.Circle) { 0.35f }
 
     Box(modifier = modifier.fillMaxWidth()) {
+        val roundness = LocalCardRoundness.current
         Surface(
             onClick = { expanded = true },
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(rivoCornerDp(20, roundness)),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -908,7 +1049,7 @@ fun StorageTargetCard(
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             Icons.Default.ArrowDropDown,
-                            contentDescription = "Select Storage",
+                            contentDescription = stringResource(R.string.contact_management_select_storage),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(20.dp)
                         )
@@ -992,7 +1133,7 @@ fun MoveContactsSelectionDialog(
                         )
                     }
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
+                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_close))
                     }
                 }
 
@@ -1002,7 +1143,7 @@ fun MoveContactsSelectionDialog(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search contacts") },
+                    placeholder = { Text(stringResource(R.string.contact_management_search_contacts)) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
@@ -1084,7 +1225,7 @@ fun MoveContactsSelectionDialog(
                         enabled = selectedIds.isNotEmpty(),
                         shape = RoundedCornerShape(16.dp)
                     ) {
-                        Text("Move (${selectedIds.size})")
+                        Text(stringResource(R.string.contact_management_move_count, selectedIds.size))
                     }
                 }
             }

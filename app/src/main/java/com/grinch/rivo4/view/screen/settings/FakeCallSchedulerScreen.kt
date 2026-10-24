@@ -1,4 +1,8 @@
 package com.grinch.rivo4.view.screen.settings
+import com.grinch.rivo4.view.components.RivoFloatingActionButton
+import com.grinch.rivo4.view.theme.LocalCardRoundness
+import com.grinch.rivo4.view.theme.rivoCornerDp
+
 
 import android.text.format.DateFormat
 import android.widget.Toast
@@ -52,7 +56,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.Card
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -61,7 +65,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
-import androidx.compose.material3.TopAppBar
+import com.grinch.rivo4.view.components.MenuTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
@@ -95,6 +99,7 @@ import com.grinch.rivo4.controller.util.PreferenceManager
 import com.grinch.rivo4.view.components.RivoDialog
 import com.grinch.rivo4.view.components.RivoDialogAction
 import com.grinch.rivo4.view.components.RivoExpressiveCard
+import com.grinch.rivo4.view.components.RivoExpressiveGroup
 import com.grinch.rivo4.view.components.RivoListItem
 import com.grinch.rivo4.view.components.RivoSectionHeader
 import com.grinch.rivo4.view.components.RivoSwitchListItem
@@ -174,31 +179,17 @@ fun FakeCallSchedulerScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = if (isCreatingSchedule) {
-                            stringResource(R.string.fake_call_new_schedule)
-                        } else {
-                            stringResource(R.string.fake_call_title)
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
+            MenuTopAppBar(
+                text = if (isCreatingSchedule) {
+                    stringResource(R.string.fake_call_new_schedule)
+                } else {
+                    stringResource(R.string.fake_call_title)
                 },
-                navigationIcon = {
-                    IconButton(
-                        onClick = {
-                            if (isCreatingSchedule) {
-                                isCreatingSchedule = false
-                            } else {
-                                navigator.navigateUp()
-                            }
-                        }
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.action_back)
-                        )
+                onBackClick = {
+                    if (isCreatingSchedule) {
+                        isCreatingSchedule = false
+                    } else {
+                        navigator.navigateUp()
                     }
                 },
                 actions = {
@@ -222,7 +213,7 @@ fun FakeCallSchedulerScreen(
                                         )
                                     }
                                 } else {
-                                    Toast.makeText(context, "Could not schedule alarm. Check exact alarm permission.", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, context.getString(R.string.fake_call_exact_alarm_error), Toast.LENGTH_LONG).show()
                                 }
                             }
                         ) {
@@ -256,18 +247,30 @@ fun FakeCallSchedulerScreen(
         },
         floatingActionButton = {
             if (!isCreatingSchedule && schedules.isNotEmpty()) {
-                ExtendedFloatingActionButton(
+                val roundness = LocalCardRoundness.current
+                RivoFloatingActionButton(
                     onClick = {
                         resetNewScheduleForm()
                         isCreatingSchedule = true
                     },
-                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    text = { Text(stringResource(R.string.fake_call_new_schedule), fontWeight = FontWeight.SemiBold) },
+                    shape = RoundedCornerShape(rivoCornerDp(20, roundness)),
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 3.dp),
-                    shape = RoundedCornerShape(20.dp)
-                )
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = stringResource(R.string.fake_call_new_schedule),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
             }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -289,7 +292,9 @@ fun FakeCallSchedulerScreen(
                         icon = Icons.Outlined.Person
                     ) {
                         Column(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
                             Row(
@@ -356,46 +361,52 @@ fun FakeCallSchedulerScreen(
                     }
                 }
 
-                // Card 2: Schedule Date & Time
+                // Group 2: Schedule Date & Time
                 item {
-                    RivoExpressiveCard(
+                    val dateStr = SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault()).format(Date(targetTimestamp))
+                    val is24 = DateFormat.is24HourFormat(context)
+                    val timeFormatPattern = if (is24) "HH:mm" else "hh:mm a"
+                    val timeStr = SimpleDateFormat(timeFormatPattern, Locale.getDefault()).format(Date(targetTimestamp))
+
+                    RivoExpressiveGroup(
                         title = stringResource(R.string.fake_call_schedule_time),
                         icon = Icons.Outlined.Schedule
                     ) {
-                        val dateStr = SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault()).format(Date(targetTimestamp))
-                        val is24 = DateFormat.is24HourFormat(context)
-                        val timeFormatPattern = if (is24) "HH:mm" else "hh:mm a"
-                        val timeStr = SimpleDateFormat(timeFormatPattern, Locale.getDefault()).format(Date(targetTimestamp))
+                        item {
+                            RivoListItem(
+                                headline = dateStr,
+                                supporting = stringResource(R.string.fake_call_select_date),
+                                leadingIcon = Icons.Outlined.CalendarToday,
+                                onClick = { showDatePicker = true }
+                            )
+                        }
 
-                        RivoListItem(
-                            headline = dateStr,
-                            supporting = stringResource(R.string.fake_call_select_date),
-                            leadingIcon = Icons.Outlined.CalendarToday,
-                            onClick = { showDatePicker = true }
-                        )
-
-                        RivoListItem(
-                            headline = timeStr,
-                            supporting = stringResource(R.string.fake_call_select_time),
-                            leadingIcon = Icons.Outlined.AccessTime,
-                            onClick = { showTimePicker = true }
-                        )
+                        item {
+                            RivoListItem(
+                                headline = timeStr,
+                                supporting = stringResource(R.string.fake_call_select_time),
+                                leadingIcon = Icons.Outlined.AccessTime,
+                                onClick = { showTimePicker = true }
+                            )
+                        }
                     }
                 }
 
-                // Card 3: Call Options
+                // Group 3: Call Options
                 item {
-                    RivoExpressiveCard(
+                    RivoExpressiveGroup(
                         title = stringResource(R.string.fake_call_options),
                         icon = Icons.Outlined.Settings
                     ) {
-                        RivoSwitchListItem(
-                            headline = stringResource(R.string.fake_call_vibrate),
-                            supporting = stringResource(R.string.fake_call_vibrate_desc),
-                            leadingIcon = Icons.Outlined.Vibration,
-                            checked = newVibrate,
-                            onCheckedChange = { newVibrate = it }
-                        )
+                        item {
+                            RivoSwitchListItem(
+                                headline = stringResource(R.string.fake_call_vibrate),
+                                supporting = stringResource(R.string.fake_call_vibrate_desc),
+                                leadingIcon = Icons.Outlined.Vibration,
+                                checked = newVibrate,
+                                onCheckedChange = { newVibrate = it }
+                            )
+                        }
                     }
                 }
 
@@ -426,7 +437,7 @@ fun FakeCallSchedulerScreen(
                                         )
                                     }
                                 } else {
-                                    Toast.makeText(context, "Could not schedule alarm. Check exact alarm permission.", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, context.getString(R.string.fake_call_exact_alarm_error), Toast.LENGTH_LONG).show()
                                 }
                             },
                             shape = RoundedCornerShape(18.dp),
@@ -471,7 +482,6 @@ fun FakeCallSchedulerScreen(
                 }
 
                 item {
-                    com.grinch.rivo4.view.components.ad.BannerAd()
                 }
             }
         } else if (schedules.isEmpty()) {
@@ -554,7 +564,6 @@ fun FakeCallSchedulerScreen(
                         }
                     }
 
-                    com.grinch.rivo4.view.components.ad.BannerAd()
                 }
             }
         } else {
@@ -569,12 +578,12 @@ fun FakeCallSchedulerScreen(
                 // Next upcoming hero banner
                 item {
                     RivoExpressiveCard(
-                        title = "Call History Settings",
+                        title = stringResource(R.string.loc_call_history_settings),
                         icon = Icons.Outlined.History
                     ) {
                         RivoSwitchListItem(
-                            headline = "Save to Call History",
-                            supporting = "Answered and missed fake calls will show up in Recents",
+                            headline = stringResource(R.string.loc_save_to_call_history),
+                            supporting = stringResource(R.string.loc_answered_and_missed_fake_calls_will_show_up_in_recents),
                             leadingIcon = Icons.Outlined.History,
                             checked = logFakeCalls,
                             onCheckedChange = {
@@ -744,7 +753,7 @@ fun FakeCallSchedulerScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "${stringResource(R.string.fake_call_schedules_title)} (${schedules.size})",
+                            text = stringResource(R.string.loc_stringresource_r_string_fake_call_schedules_title_schedules_size),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -769,10 +778,11 @@ fun FakeCallSchedulerScreen(
                     val countdownStr = if (mins > 0) "${mins}m ${secs}s" else "${secs}s"
                     val formattedDate = SimpleDateFormat("EEE, d MMM • HH:mm", Locale.getDefault()).format(Date(itemSchedule.triggerTimestampMillis))
 
-                    OutlinedCard(
+                    val roundness = LocalCardRoundness.current
+                    Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(18.dp),
-                        colors = CardDefaults.outlinedCardColors(
+                        shape = RoundedCornerShape(rivoCornerDp(18, roundness)),
+                        colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                         )
                     ) {
@@ -834,7 +844,7 @@ fun FakeCallSchedulerScreen(
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Text(
-                                        text = "$formattedDate ($countdownStr)",
+                                        text = stringResource(R.string.loc_formatteddate_countdownstr),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.primary,
                                         fontWeight = FontWeight.Medium
@@ -879,7 +889,6 @@ fun FakeCallSchedulerScreen(
                 }
 
                 item {
-                    com.grinch.rivo4.view.components.ad.BannerAd()
                 }
             }
         }

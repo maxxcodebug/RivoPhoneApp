@@ -10,32 +10,15 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
 import android.util.Log
-import com.grinch.rivo4.RivoApp
 
 object CallUiHelper {
 
     private const val TAG = "CallUiHelper"
 
     /**
-     * Determines whether an incoming call (real or fake) should immediately open full-screen.
-     *
-     * Returns true (Full-Screen) IF:
-     * 1. User enabled "Always Jump to Full Screen" in Settings.
-     * 2. The device is on the lockscreen or display is turned off (screen locked/sleeping).
-     * 3. The user is actively inside the Rivo app.
-     * 4. The user is on the home screen (launcher) with no other app open.
-     *
-     * Returns false (Heads-Up Notification only) IF:
-     * - The user is actively using the device inside another application (e.g. YouTube, WhatsApp, browser, games).
+     * Checks whether the device is currently locked or the screen is off (blacked).
      */
-    fun shouldShowFullScreen(context: Context, preferenceManager: PreferenceManager): Boolean {
-        // 1. Check user preference toggle
-        if (preferenceManager.getBoolean(PreferenceManager.KEY_ALWAYS_FULL_SCREEN_CALLS, false)) {
-            Log.d(TAG, "Full-screen enabled via preference")
-            return true
-        }
-
-        // 2. Lockscreen or screen is off/sleeping or OEM compatibility (Vivo, iQOO, etc.)
+    fun isDeviceLocked(context: Context): Boolean {
         val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         @Suppress("DEPRECATION")
@@ -43,26 +26,29 @@ object CallUiHelper {
                 keyguardManager?.inKeyguardRestrictedInputMode() == true ||
                 keyguardManager?.isDeviceLocked == true
         val isInteractive = powerManager?.isInteractive == true
+        return isLocked || !isInteractive
+    }
 
-        if (isLocked || !isInteractive || OemPermissionHelper.isVivo()) {
-            Log.d(TAG, "Full-screen: device is locked ($isLocked), screen off (${!isInteractive}), or Vivo/OEM device")
+    /**
+     * Determines whether an incoming call should immediately open full-screen.
+     */
+    fun shouldShowFullScreen(context: Context, preferenceManager: PreferenceManager): Boolean {
+        if (isDeviceLocked(context)) {
+            Log.d(TAG, "Full-screen: device is locked or screen off")
             return true
         }
 
-        // 3. User is actively using the Rivo app
-        if (RivoApp.isAppInForeground) {
-            Log.d(TAG, "Full-screen: Rivo app is in foreground")
+        if (preferenceManager.getBoolean(PreferenceManager.KEY_ALWAYS_FULL_SCREEN_CALLS, false)) {
+            Log.d(TAG, "Full-screen enabled via preference")
             return true
         }
 
-        // 4. Check if user is on the home screen (launcher)
         if (isHomeScreenForeground(context)) {
-            Log.d(TAG, "Full-screen: user is on home screen")
+            Log.d(TAG, "Full-screen: launcher/home screen is in foreground (device not in active app use)")
             return true
         }
 
-        // Otherwise: User is actively in another app -> show heads-up banner only
-        Log.d(TAG, "Heads-up notification only: user is actively in another app")
+        Log.d(TAG, "Heads-up notification only: user is actively using an app on the phone")
         return false
     }
 

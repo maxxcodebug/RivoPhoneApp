@@ -51,12 +51,14 @@ object FakeCallNotificationManager {
         val silentChannel = NotificationChannel(
             SILENT_CHANNEL_ID,
             context.getString(R.string.fake_call_incoming_channel_title),
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_MIN
         ).apply {
             description = context.getString(R.string.fake_call_incoming_channel_desc)
-            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            lockscreenVisibility = Notification.VISIBILITY_SECRET
             enableVibration(false)
+            vibrationPattern = null
             setSound(null, null)
+            setShowBadge(false)
         }
         notificationManager.createNotificationChannel(silentChannel)
     }
@@ -119,13 +121,19 @@ object FakeCallNotificationManager {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val photoBitmap = loadPhotoBitmap(context, photoUri)
+        val avatarBitmap = com.grinch.rivo4.controller.util.CallNotificationHelper.getAvatarBitmap(context, callerName, photoBitmap)
+        val notifColor = com.grinch.rivo4.controller.util.CallNotificationHelper.getNotificationColor(context)
+
         val personBuilder = Person.Builder()
             .setName(callerName)
             .setImportant(true)
+            .setBot(false)
+            .setIcon(IconCompat.createWithBitmap(avatarBitmap))
 
-        val photoBitmap = loadPhotoBitmap(context, photoUri)
-        if (photoBitmap != null) {
-            personBuilder.setIcon(IconCompat.createWithBitmap(photoBitmap))
+        if (phoneNumber.isNotBlank()) {
+            personBuilder.setUri("tel:")
+            personBuilder.setKey(phoneNumber)
         }
         val person = personBuilder.build()
 
@@ -152,18 +160,25 @@ object FakeCallNotificationManager {
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setContentIntent(contentPendingIntent)
                 .setOngoing(true)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setVisibility(if (silentBackground) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PUBLIC)
                 .setAutoCancel(false)
                 .setTimeoutAfter(45_000L)
-                .setFullScreenIntent(contentPendingIntent, true)
-                .setStyle(NotificationCompat.CallStyle.forIncomingCall(person, declinePendingIntent, answerPendingIntent))
+                .setColorized(true)
+                .setColor(notifColor)
+                .setLargeIcon(avatarBitmap)
 
             if (silentBackground) {
-                // When full-screen call UI is displayed, keep notification silent in background
-                builder.setPriority(NotificationCompat.PRIORITY_LOW)
+                // When device is locked, blacked, or full-screen call UI is displayed, do NOT set fullScreenIntent or CallStyle on notification.
+                // Keep notification completely silent and MIN priority so ONLY the full-screen activity is shown.
+                builder.setPriority(NotificationCompat.PRIORITY_MIN)
                 builder.setSilent(true)
+                builder.setSound(null)
+                builder.setVibrate(null)
+                builder.setDefaults(0)
                 builder.setOnlyAlertOnce(true)
             } else {
+                builder.setFullScreenIntent(contentPendingIntent, true)
+                builder.setStyle(NotificationCompat.CallStyle.forIncomingCall(person, declinePendingIntent, answerPendingIntent))
                 // Heads-Up Mode: show prominent floating notification banner
                 builder.setPriority(NotificationCompat.PRIORITY_MAX)
                 builder.setSilent(false)
@@ -188,17 +203,20 @@ object FakeCallNotificationManager {
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setContentIntent(contentPendingIntent)
                 .setOngoing(true)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setVisibility(if (silentBackground) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PUBLIC)
                 .setAutoCancel(false)
                 .setTimeoutAfter(45_000L)
-                .addAction(declineAction)
-                .addAction(answerAction)
 
             if (silentBackground) {
-                fallbackBuilder.setPriority(NotificationCompat.PRIORITY_LOW)
+                fallbackBuilder.setPriority(NotificationCompat.PRIORITY_MIN)
                 fallbackBuilder.setSilent(true)
+                fallbackBuilder.setSound(null)
+                fallbackBuilder.setVibrate(null)
+                fallbackBuilder.setDefaults(0)
                 fallbackBuilder.setOnlyAlertOnce(true)
             } else {
+                fallbackBuilder.addAction(declineAction)
+                fallbackBuilder.addAction(answerAction)
                 fallbackBuilder.setPriority(NotificationCompat.PRIORITY_MAX)
                 fallbackBuilder.setSilent(false)
             }
@@ -273,13 +291,19 @@ object FakeCallNotificationManager {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val photoBitmap = loadPhotoBitmap(context, photoUri)
+        val avatarBitmap = com.grinch.rivo4.controller.util.CallNotificationHelper.getAvatarBitmap(context, callerName, photoBitmap)
+        val notifColor = com.grinch.rivo4.controller.util.CallNotificationHelper.getNotificationColor(context)
+
         val personBuilder = Person.Builder()
             .setName(callerName)
             .setImportant(true)
+            .setBot(false)
+            .setIcon(IconCompat.createWithBitmap(avatarBitmap))
 
-        val photoBitmap = loadPhotoBitmap(context, photoUri)
-        if (photoBitmap != null) {
-            personBuilder.setIcon(IconCompat.createWithBitmap(photoBitmap))
+        if (phoneNumber.isNotBlank()) {
+            personBuilder.setUri("tel:")
+            personBuilder.setKey(phoneNumber)
         }
         val person = personBuilder.build()
 
@@ -316,10 +340,16 @@ object FakeCallNotificationManager {
                 .setOngoing(true)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setSilent(true)
+                .setSound(null)
+                .setVibrate(null)
+                .setDefaults(0)
                 .setOnlyAlertOnce(true)
                 .setWhen(effectiveTime)
                 .setUsesChronometer(true)
                 .setFullScreenIntent(returnPendingIntent, false)
+                .setColorized(true)
+                .setColor(notifColor)
+                .setLargeIcon(avatarBitmap)
                 .addAction(muteAction)
                 .addAction(speakerAction)
                 .setStyle(NotificationCompat.CallStyle.forOngoingCall(person, endPendingIntent))
@@ -346,6 +376,9 @@ object FakeCallNotificationManager {
                 .setOngoing(true)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setSilent(true)
+                .setSound(null)
+                .setVibrate(null)
+                .setDefaults(0)
                 .setOnlyAlertOnce(true)
                 .setWhen(effectiveTime)
                 .setUsesChronometer(true)
@@ -376,8 +409,22 @@ object FakeCallNotificationManager {
         if (photoUriStr.isNullOrEmpty()) return null
         return try {
             val uri = Uri.parse(photoUriStr)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(uri)?.use { stream ->
-                BitmapFactory.decodeStream(stream)
+                BitmapFactory.decodeStream(stream, null, bounds)
+            }
+            val reqSize = 256
+            var sampleSize = 1
+            if (bounds.outHeight > reqSize || bounds.outWidth > reqSize) {
+                val halfHeight = bounds.outHeight / 2
+                val halfWidth = bounds.outWidth / 2
+                while (halfHeight / sampleSize >= reqSize && halfWidth / sampleSize >= reqSize) {
+                    sampleSize *= 2
+                }
+            }
+            val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, options)
             }
         } catch (e: Exception) {
             null
